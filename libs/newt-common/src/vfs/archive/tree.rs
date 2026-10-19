@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 
-use crate::vfs::{File, Mode, UserGroup};
+use crate::vfs::{File, Mode, Symlink, UserGroup};
 use crate::{Error, ErrorKind};
 
 pub(super) struct DirectoryTree {
@@ -58,11 +58,11 @@ impl DirectoryTree {
 
     /// For symlink entries, follow the target and fill in `is_dir` and `size`
     /// from the resolved target — mirroring the lstat+stat pattern used by the
-    /// local filesystem VFS. The entry keeps `is_symlink=true` and
-    /// `symlink_target` intact.  If resolution fails (broken link), the
-    /// original metadata is left unchanged.
+    /// local filesystem VFS. The entry keeps its `symlink` intact. If
+    /// resolution fails (broken link), the original metadata is left
+    /// unchanged.
     fn fill_symlink_target_metadata(&self, parent: &StdPath, file: &mut File) {
-        if !file.is_symlink {
+        if !file.is_symlink() {
             return;
         }
         let mut full_path = parent.to_path_buf();
@@ -136,8 +136,8 @@ impl DirectoryTree {
                 .and_then(|children| children.iter().find(|f| f.name == *component));
 
             match file {
-                Some(f) if f.is_symlink && (!is_last || follow_last) => {
-                    if let Some(ref target) = f.symlink_target {
+                Some(f) if f.is_symlink() && (!is_last || follow_last) => {
+                    if let Some(target) = f.symlink_target() {
                         // Raw link-target string from the archive; interpret
                         // it as a path locally for resolution.
                         let target = StdPath::new(target);
@@ -373,12 +373,7 @@ pub(super) fn build_directory_tree_from_iluvatar(
             hard_links: None,
             is_dir,
             is_hidden: false,
-            is_symlink,
-            symlink_target: if is_symlink {
-                entry.link_target.clone()
-            } else {
-                None
-            },
+            symlink: is_symlink.then(|| Symlink::from_read(entry.link_target.clone())),
             user: Some(UserGroup::Id(entry.uid as u32)),
             group: Some(UserGroup::Id(entry.gid as u32)),
             mode: Some(Mode(entry.mode)),

@@ -199,8 +199,7 @@ pub fn dialog(
                         inode: dir_entry.and_then(|f| f.inode),
                         device_id: dir_entry.and_then(|f| f.device_id),
                         is_dir: true,
-                        is_symlink: false,
-                        symlink_target: None,
+                        symlink: None,
                         mode_set: mode.unwrap_or(0),
                         mode_clear: mode.map(|m| !m & MODE_MASK).unwrap_or(0),
                         has_mode: mode.is_some(),
@@ -262,8 +261,7 @@ pub fn dialog(
                         inode: None,
                         device_id: None,
                         is_dir: true,
-                        is_symlink: false,
-                        symlink_target: None,
+                        symlink: None,
                         mode_set: 0,
                         mode_clear: 0,
                         has_mode: false,
@@ -345,9 +343,8 @@ pub fn dialog(
                     };
 
                     let is_dir = files.len() == 1 && files[0].is_dir;
-                    let is_symlink = files.len() == 1 && files[0].is_symlink;
-                    let symlink_target = if files.len() == 1 {
-                        files[0].symlink_target.clone()
+                    let symlink = if files.len() == 1 {
+                        files[0].symlink.clone()
                     } else {
                         None
                     };
@@ -436,8 +433,7 @@ pub fn dialog(
                         inode,
                         device_id,
                         is_dir,
-                        is_symlink,
-                        symlink_target,
+                        symlink,
                         mode_set,
                         mode_clear,
                         has_mode,

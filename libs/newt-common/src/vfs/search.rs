@@ -1171,9 +1171,9 @@ impl Criteria {
         let f = &self.filters;
         let kind = match f.kind {
             EntryKind::Any => true,
-            EntryKind::File => !file.is_dir && !file.is_symlink,
+            EntryKind::File => !file.is_dir && !file.is_symlink(),
             EntryKind::Directory => file.is_dir,
-            EntryKind::Symlink => file.is_symlink,
+            EntryKind::Symlink => file.is_symlink(),
         };
         let size = (f.min_size.is_none() && f.max_size.is_none())
             || (!file.is_dir

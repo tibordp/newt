@@ -57,6 +57,37 @@ impl Mode {
     }
 }
 
+/// What a symbolic link points at.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Symlink {
+    /// The raw target as reported by the source FS. A string, not a path
+    /// type: it may be relative (`../x`) or otherwise un-normalizable, and
+    /// it crosses the agent↔host RPC boundary — no `std::path` there, its
+    /// meaning belongs to the source OS, not the receiver's.
+    Target(String),
+    /// A link whose target could not be read: `readlink` refused it (a
+    /// `/proc` link of another user's process, a reparse point the platform
+    /// can't parse), or an archive keeps it encrypted. Never stands for an
+    /// empty target — what needs the target fails on the entry instead.
+    Unknown,
+}
+
+impl Symlink {
+    /// The link a read of its target makes: the target, or `Unknown` when
+    /// the read failed.
+    pub fn from_read(target: Option<String>) -> Self {
+        target.map_or(Self::Unknown, Self::Target)
+    }
+
+    pub fn target(&self) -> Option<&str> {
+        match self {
+            Self::Target(target) => Some(target),
+            Self::Unknown => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct File {
     pub name: String,
@@ -80,12 +111,8 @@ pub struct File {
     pub hard_links: Option<u64>,
     pub is_dir: bool,
     pub is_hidden: bool,
-    pub is_symlink: bool,
-    /// Raw link target as reported by the source FS. A string, not a path
-    /// type: it may be relative (`../x`) or otherwise un-normalizable, and
-    /// it crosses the agent↔host RPC boundary — no `std::path` there, its
-    /// meaning belongs to the source OS, not the receiver's.
-    pub symlink_target: Option<String>,
+    /// Set for a symbolic link (the entry itself, as `lstat` sees it).
+    pub symlink: Option<Symlink>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
@@ -124,8 +151,7 @@ impl File {
             hard_links: None,
             is_dir: true,
             is_hidden: false,
-            is_symlink: false,
-            symlink_target: None,
+            symlink: None,
             user: None,
             group: None,
             mode: None,
@@ -151,6 +177,15 @@ impl File {
     /// `name`, which need not be unique.
     pub fn key(&self) -> &str {
         self.key.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        self.symlink.is_some()
+    }
+
+    /// A link's target, when it could be read.
+    pub fn symlink_target(&self) -> Option<&str> {
+        self.symlink.as_ref().and_then(Symlink::target)
     }
 
     /// A FIFO, socket or device, as far as the mode tells. See
@@ -262,15 +297,25 @@ impl FileList {
 pub struct FileDetails {
     pub size: u64,
     pub is_dir: bool,
-    pub is_symlink: bool,
-    /// Raw link target as reported by the source FS (see `File::symlink_target`).
-    pub symlink_target: Option<String>,
+    /// See `File::symlink`.
+    pub symlink: Option<Symlink>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
     pub modified: Option<i64>,
     pub accessed: Option<i64>,
     pub created: Option<i64>,
+}
+
+impl FileDetails {
+    pub fn is_symlink(&self) -> bool {
+        self.symlink.is_some()
+    }
+
+    /// A link's target, when it could be read.
+    pub fn symlink_target(&self) -> Option<&str> {
+        self.symlink.as_ref().and_then(Symlink::target)
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]

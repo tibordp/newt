@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::proc::NoConsoleWindow;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 use crate::{Error, ErrorKind};
 
@@ -512,10 +512,23 @@ fn mode_to_permissions(mode: u32) -> openssh_sftp_client::metadata::Permissions 
     p
 }
 
+/// A link as the server's `readlink` reports it; `Unknown` when it refuses.
+async fn read_symlink(sftp: &Sftp, path: &std::path::Path) -> Symlink {
+    Symlink::from_read(
+        sftp.fs()
+            .read_link(path)
+            .await
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned()),
+    )
+}
+
+/// `symlink` is the link's target read, for an entry `meta` says is one.
 fn metadata_to_file(
     name: String,
     meta: &openssh_sftp_client::metadata::MetaData,
     follow_meta: Option<&openssh_sftp_client::metadata::MetaData>,
+    symlink: Option<Symlink>,
 ) -> File {
     let is_symlink = meta.file_type().is_some_and(|ft| ft.is_symlink());
 
@@ -539,8 +552,7 @@ fn metadata_to_file(
         inode: None,
         hard_links: None,
         is_dir,
-        is_symlink,
-        symlink_target: None,
+        symlink,
         user: meta.uid().map(UserGroup::Id),
         group: meta.gid().map(UserGroup::Id),
         mode,
@@ -683,12 +695,16 @@ impl Vfs for SftpVfs {
                 let target_path = sftp_path(&path_owned.join(&name));
                 async move {
                     let is_symlink = meta.file_type().is_some_and(|ft| ft.is_symlink());
-                    let follow_meta = if is_symlink {
-                        sftp.fs().metadata(target_path).await.ok()
+                    let (follow_meta, symlink) = if is_symlink {
+                        let (follow, link) = futures::join!(
+                            async { sftp.fs().metadata(&target_path).await.ok() },
+                            read_symlink(sftp, &target_path),
+                        );
+                        (follow, Some(link))
                     } else {
-                        None
+                        (None, None)
                     };
-                    metadata_to_file(name, &meta, follow_meta.as_ref())
+                    metadata_to_file(name, &meta, follow_meta.as_ref(), symlink)
                 }
             }))
             .buffered(SYMLINK_RESOLVE_CONCURRENCY);
@@ -747,15 +763,25 @@ impl Vfs for SftpVfs {
 
         let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
-        let follow_meta = if is_symlink {
-            fs.metadata(sftp_path(path)).await.ok()
+        let (follow_meta, symlink) = if is_symlink {
+            let link_path = sftp_path(path);
+            let (follow, link) = futures::join!(
+                async { self.sftp.fs().metadata(&link_path).await.ok() },
+                read_symlink(&self.sftp, &link_path),
+            );
+            (follow, Some(link))
         } else {
-            None
+            (None, None)
         };
 
         let name = path.file_name().unwrap_or_default().to_string();
 
-        Ok(metadata_to_file(name, &symlink_meta, follow_meta.as_ref()))
+        Ok(metadata_to_file(
+            name,
+            &symlink_meta,
+            follow_meta.as_ref(),
+            symlink,
+        ))
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
@@ -766,14 +792,10 @@ impl Vfs for SftpVfs {
         let symlink_meta = fs.symlink_metadata(sftp_path(path)).await?;
         let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
-        let (effective_meta, symlink_target) = if is_symlink {
+        let (effective_meta, symlink) = if is_symlink {
             let follow = fs.metadata(sftp_path(path)).await.ok();
-            let target = fs
-                .read_link(sftp_path(path))
-                .await
-                .ok()
-                .map(|p| p.to_string_lossy().to_string());
-            (follow.unwrap_or(symlink_meta), target)
+            let link = read_symlink(&self.sftp, &sftp_path(path)).await;
+            (follow.unwrap_or(symlink_meta), Some(link))
         } else {
             (symlink_meta, None)
         };
@@ -787,8 +809,7 @@ impl Vfs for SftpVfs {
         Ok(FileDetails {
             size,
             is_dir,
-            is_symlink,
-            symlink_target,
+            symlink,
             user: symlink_meta.uid().map(UserGroup::Id),
             group: symlink_meta.gid().map(UserGroup::Id),
             mode,

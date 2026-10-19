@@ -61,8 +61,7 @@ const scene: Scene = {
           file("current", {
             ...linux,
             size: 12,
-            is_symlink: true,
-            symlink_target: "2026-07-28.2",
+            symlink: { target: "2026-07-28.2" },
             modified: at("2026-07-28T15:31:49"),
           }),
           file("deploy.log", {

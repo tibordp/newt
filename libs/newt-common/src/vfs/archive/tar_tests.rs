@@ -244,8 +244,8 @@ async fn file_details_reports_symlink_metadata() {
         .file_details(&vp("/links/soft.txt"))
         .await
         .expect("file_details");
-    assert!(details.is_symlink);
-    assert_eq!(details.symlink_target.as_deref(), Some("../hello.txt"));
+    assert!(details.is_symlink());
+    assert_eq!(details.symlink_target(), Some("../hello.txt"));
 }
 
 /// Tar has no `get_metadata` override — the trait default derives it from
@@ -509,7 +509,10 @@ async fn listing(vfs: &TarArchiveVfs, path: &str) -> Vec<(String, bool, bool)> {
         .files
         .into_iter()
         .filter(|f| f.name != "..")
-        .map(|f| (f.name, f.is_dir, f.is_symlink))
+        .map(|f| {
+            let is_symlink = f.is_symlink();
+            (f.name, f.is_dir, is_symlink)
+        })
         .collect();
     entries.sort();
     entries

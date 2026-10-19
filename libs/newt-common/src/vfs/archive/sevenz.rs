@@ -29,7 +29,7 @@ use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode};
+use crate::vfs::{File, FsStats, Mode, Symlink};
 use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::open_read_at;
@@ -693,8 +693,8 @@ fn build_tree(
             hard_links: None,
             is_dir,
             is_hidden: entry.hidden,
-            is_symlink: entry.kind == sz::EntryKind::Symlink,
-            symlink_target: symlink_targets.get(&entry.name).cloned(),
+            symlink: (entry.kind == sz::EntryKind::Symlink)
+                .then(|| Symlink::from_read(symlink_targets.get(&entry.name).cloned())),
             user: None,
             group: None,
             mode: entry.mode.map(Mode),
@@ -755,8 +755,7 @@ impl Vfs for SevenZArchiveVfs {
         Ok(FileDetails {
             size: if is_dir { 0 } else { entry.size },
             is_dir,
-            is_symlink: entry.kind == sz::EntryKind::Symlink,
-            symlink_target: None,
+            symlink: (entry.kind == sz::EntryKind::Symlink).then_some(Symlink::Unknown),
             user: None,
             group: None,
             mode: entry.mode.map(Mode),

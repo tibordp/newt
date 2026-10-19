@@ -132,8 +132,7 @@ const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
 const detailsOf = async (path: VfsPath): Promise<FileDetails> => ({
   size: fixture(path).size ?? (await bytesOf(path)).length,
   is_dir: false,
-  is_symlink: false,
-  symlink_target: null,
+  symlink: null,
   user: { name: "demo" },
   group: { name: "staff" },
   mode: 0o100644,

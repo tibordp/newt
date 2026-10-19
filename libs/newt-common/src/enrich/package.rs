@@ -55,7 +55,7 @@ impl Enricher for PackageEnricher {
         for file in listing.files.iter().filter(|f| {
             f.name != ".."
                 && f.is_dir
-                && !f.is_symlink
+                && !f.is_symlink()
                 && match scope {
                     EnrichScope::AllEntries => true,
                     EnrichScope::Entries(keys) => keys.iter().any(|k| k == f.key()),

@@ -18,7 +18,7 @@ use newt_disc::{Chunk, DiscError, DiscFs, Entry, EntryData, EntryKind, ExtentKin
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
 use super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
@@ -356,8 +356,7 @@ fn entry_to_file(e: &Entry) -> File {
         hard_links: e.nlink.map(u64::from),
         is_dir: e.kind == EntryKind::Dir,
         is_hidden: e.hidden || e.name.starts_with('.'),
-        is_symlink: e.kind == EntryKind::Symlink,
-        symlink_target: e.link_target.clone(),
+        symlink: (e.kind == EntryKind::Symlink).then(|| Symlink::from_read(e.link_target.clone())),
         user: e.uid.map(UserGroup::Id),
         group: e.gid.map(UserGroup::Id),
         mode: e.mode.map(Mode),
@@ -630,7 +629,7 @@ impl Vfs for DiscVfs {
         let mut files = vec![File::parent_dir()];
         for e in entries.iter() {
             let mut file = entry_to_file(e);
-            if file.is_symlink {
+            if file.is_symlink() {
                 self.fill_symlink_target(state, &key, &mut file).await;
             }
             files.push(file);
@@ -662,8 +661,8 @@ impl Vfs for DiscVfs {
                 entry.size
             },
             is_dir: entry.kind == EntryKind::Dir,
-            is_symlink: entry.kind == EntryKind::Symlink,
-            symlink_target: entry.link_target.clone(),
+            symlink: (entry.kind == EntryKind::Symlink)
+                .then(|| Symlink::from_read(entry.link_target.clone())),
             user: entry.uid.map(UserGroup::Id),
             group: entry.gid.map(UserGroup::Id),
             mode: entry.mode.map(Mode),
@@ -677,7 +676,7 @@ impl Vfs for DiscVfs {
         let state = self.ensure_state().await?;
         let (key, entry) = self.resolve(state, path, false).await?;
         let mut file = entry_to_file(&entry);
-        if file.is_symlink {
+        if file.is_symlink() {
             let parent_key = match key.rfind('/') {
                 Some(pos) => key[..pos].to_string(),
                 None => String::new(),

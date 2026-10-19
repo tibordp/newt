@@ -288,8 +288,8 @@ async fn lists_root_dirs_and_symlink() {
 
     let links = vfs.list_files(&vp("/links"), None).await.unwrap();
     let soft = links.files.iter().find(|f| f.name == "soft.txt").unwrap();
-    assert!(soft.is_symlink);
-    assert_eq!(soft.symlink_target.as_deref(), Some("../hello.txt"));
+    assert!(soft.is_symlink());
+    assert_eq!(soft.symlink_target(), Some("../hello.txt"));
     // Resolved through the link: the target's size.
     assert_eq!(soft.size, Some(12));
     assert_eq!(

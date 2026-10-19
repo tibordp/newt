@@ -12,7 +12,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::open_read_at;
@@ -674,11 +674,8 @@ impl Vfs for TarArchiveVfs {
 
         let is_symlink =
             original_entry.is_some_and(|e| matches!(e.entry_type, iluvatar::EntryType::SymLink));
-        let symlink_target = if is_symlink {
-            original_entry.and_then(|e| e.link_target.clone())
-        } else {
-            None
-        };
+        let symlink = is_symlink
+            .then(|| Symlink::from_read(original_entry.and_then(|e| e.link_target.clone())));
 
         // Resolve symlinks/hardlinks for actual metadata (stat equivalent).
         // Fall back to the original entry if the target is broken.
@@ -696,8 +693,7 @@ impl Vfs for TarArchiveVfs {
         Ok(FileDetails {
             size: resolved_entry.size,
             is_dir: resolved_entry.entry_type.is_directory(),
-            is_symlink,
-            symlink_target,
+            symlink,
             user: Some(UserGroup::Id(resolved_entry.uid as u32)),
             group: Some(UserGroup::Id(resolved_entry.gid as u32)),
             mode: Some(Mode(resolved_entry.mode)),

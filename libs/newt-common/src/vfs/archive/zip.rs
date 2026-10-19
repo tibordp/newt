@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::open_read_at;
@@ -594,8 +594,8 @@ fn build_tree(
             hard_links: None,
             is_dir,
             is_hidden: entry.hidden,
-            is_symlink: entry.kind == zr::EntryKind::Symlink,
-            symlink_target: symlink_targets.get(&entry.name).cloned(),
+            symlink: (entry.kind == zr::EntryKind::Symlink)
+                .then(|| Symlink::from_read(symlink_targets.get(&entry.name).cloned())),
             user: entry.uid.map(UserGroup::Id),
             group: entry.gid.map(UserGroup::Id),
             mode: entry.mode.map(Mode),
@@ -658,8 +658,7 @@ impl Vfs for ZipArchiveVfs {
         Ok(FileDetails {
             size: if is_dir { 0 } else { entry.size },
             is_dir,
-            is_symlink: entry.kind == zr::EntryKind::Symlink,
-            symlink_target: None,
+            symlink: (entry.kind == zr::EntryKind::Symlink).then_some(Symlink::Unknown),
             user: entry.uid.map(UserGroup::Id),
             group: entry.gid.map(UserGroup::Id),
             mode: entry.mode.map(Mode),

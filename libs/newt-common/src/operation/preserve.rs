@@ -59,7 +59,7 @@ impl SourceAttributes {
         // A destination that declares no metadata support (object stores)
         // gets no stat-derived attributes and no prompts about them: the
         // permissions default is on for everyone.
-        if (!file.is_dir || file.is_symlink)
+        if (!file.is_dir || file.is_symlink())
             && destination.descriptor().can_set_metadata()
             && (options.preserve_permissions
                 || options.preserve_owner
@@ -83,7 +83,7 @@ impl SourceAttributes {
             }
         }
         let by_name = options.ownership_by_name;
-        let regular = !file.is_dir && !file.is_symlink;
+        let regular = !file.is_dir && !file.is_symlink();
         // Numeric ownership rides on the stat; the attribute verb serves
         // names, and native identities where there is no numeric id.
         let uid_known = result.metadata.as_ref().and_then(|m| m.uid).is_some();

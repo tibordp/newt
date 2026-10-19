@@ -501,7 +501,7 @@ async fn enter_directory(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
     // (`C:\Users\<user>\Cookies` — `Everyone:(DENY)(RD)`, unlistable
     // by design) resolve. Deliberately shallow: navigating to such a
     // path directly (Ctrl+L, a breadcrumb) still errors.
-    let symlink_fallback = file.is_symlink && {
+    let symlink_fallback = file.is_symlink() && {
         let source_vfs = pane
             .get_focused_source()
             .map(|p| p.vfs_id)
@@ -776,7 +776,7 @@ pub async fn cmd_follow_symlink(
     } else {
         let Some(link) = pane
             .get_focused_file_info()
-            .filter(|f| f.is_symlink)
+            .filter(|f| f.is_symlink())
             .and_then(|_| pane.get_focused_source())
         else {
             return Ok(());

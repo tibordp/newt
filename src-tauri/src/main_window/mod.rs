@@ -623,8 +623,8 @@ pub enum ModalDataKind {
         inode: Option<u64>,
         device_id: Option<u64>,
         is_dir: bool,
-        is_symlink: bool,
-        symlink_target: Option<String>,
+        /// Single-selection only.
+        symlink: Option<newt_common::vfs::Symlink>,
         /// Whether the VFS supports metadata changes (chmod/chown)
         can_set_metadata: bool,
         /// Bits that are ON in all selected files

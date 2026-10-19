@@ -311,8 +311,8 @@ async fn symlink_lists_with_target_and_reads_through() {
 
     let files = vfs.list_files(&vp("/links"), None).await.expect("list");
     let link = files.files.iter().find(|f| f.name == "soft.txt").unwrap();
-    assert!(link.is_symlink);
-    assert_eq!(link.symlink_target.as_deref(), Some("../hello.txt"));
+    assert!(link.is_symlink());
+    assert_eq!(link.symlink_target(), Some("../hello.txt"));
     // lstat+stat mirror: target metadata fills is_dir/size.
     assert_eq!(link.size, Some(12));
 

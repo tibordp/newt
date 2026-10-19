@@ -7,6 +7,7 @@ import type {
   FileView,
   FilterMode,
   SizeUnits,
+  Symlink,
 } from "../lib/bindings";
 
 export type {
@@ -76,12 +77,17 @@ export function isPackage(row: FileView): boolean {
   return row.annotations?.some((a) => "package" in a) ?? false;
 }
 
+/// A link's target, when it could be read.
+export function symlinkTarget(link: Symlink | null): string | null {
+  return link !== null && link !== "unknown" ? link.target : null;
+}
+
 /// Whether a row is a file with an execute bit. A symlink's own mode says
 /// nothing about its target, so a link never counts.
 export function isExecutable(row: FileView): boolean {
   return (
     !row.is_dir &&
-    !row.is_symlink &&
+    row.symlink === null &&
     row.mode != null &&
     (row.mode & 0o111) !== 0
   );

@@ -32,7 +32,7 @@ pub use archive::{
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use change_notifier::VfsChangeNotifier;
 pub use disc::DiscVfs;
-pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, ToUnix, UserGroup};
+pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, Symlink, ToUnix, UserGroup};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use mount::{
     MountContext, MountRequest, MountResponse, MountedVfsInfo, SNIFF_LEN, SftpAskpass, VfsManager,
@@ -777,7 +777,7 @@ pub trait Vfs: Send + Sync {
     async fn resolve_link(&self, path: &Path) -> Result<path::PathBuf, Error> {
         let file = self.file_info(path).await?;
         let target = file
-            .symlink_target
+            .symlink_target()
             .ok_or_else(|| Error::custom("link target unavailable"))?;
         let parent = path
             .parent()

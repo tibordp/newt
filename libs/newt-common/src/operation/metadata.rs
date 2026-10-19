@@ -49,7 +49,7 @@ impl Visitor for AttributeCollector<'_> {
         if self.cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
-        let is_dir = entry.file.is_dir && !entry.file.is_symlink;
+        let is_dir = entry.file.is_dir && !entry.file.is_symlink();
         if is_dir && entry.mount_point && !self.cross_mount_points && entry.depth > 0 {
             skip_mount_point(self.reporter, self.vfs, entry.path, MOUNT_POINT_HINT).await?;
             return Ok(Control::Skip);
@@ -142,7 +142,7 @@ pub(super) async fn execute_set_metadata(
                 match vfs.file_info(local_path).await {
                     // A link's own mode is fixed or meaningless; its
                     // target is changed as itself, if it's selected.
-                    Ok(file_info) if file_info.is_symlink => None,
+                    Ok(file_info) if file_info.is_symlink() => None,
                     Ok(file_info) => {
                         let old_mode = file_info.mode.map(|m| m.0).unwrap_or(0);
                         Some((old_mode | mode_set) & !mode_clear)

@@ -874,6 +874,99 @@ async fn test_copy_with_symlinks() {
     assert_eq!(link_entry.map(|(_, t)| *t), Some("symlink"));
 }
 
+/// A link whose target can't be read is asked about, never recreated
+/// pointing at nothing.
+#[tokio::test]
+async fn test_copy_unreadable_symlink_asks_and_skips() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"hello")
+        .unreadable_symlink("/src/link")
+        .dir("/dst")
+        .build();
+
+    let mut issues = Vec::new();
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        |issue| {
+            issues.push(issue.message.clone());
+            skip_all(issue)
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert!(issues[0].contains("Cannot read where"), "{issues:?}");
+    assert_eq!(result.vfs.read_content("/dst/src/a.txt"), b"hello");
+    assert!(!result.vfs.exists("/dst/src/link"));
+}
+
+/// Each Retry reads the link again, and asks again while it stays unknown.
+#[tokio::test]
+async fn test_copy_unreadable_symlink_retry_reads_again() {
+    let vfs = MockVfs::builder()
+        .unreadable_symlink("/src/link")
+        .dir("/dst")
+        .build();
+
+    let retries = std::cell::Cell::new(2);
+    let mut asked = 0;
+    let mut respond = retry_then_skip(&retries);
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/link")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        |issue| {
+            asked += 1;
+            respond(issue)
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(asked, 3);
+    assert!(!result.vfs.exists("/dst/link"));
+}
+
+/// Moving to another filesystem copies, then deletes what was copied; a
+/// skipped link stays where it was.
+#[tokio::test]
+async fn test_move_cross_vfs_keeps_an_unreadable_symlink() {
+    let src_vfs = MockVfs::builder()
+        .file("/data/a.txt", b"cross-vfs")
+        .unreadable_symlink("/data/link")
+        .build();
+    let dst_vfs = MockVfs::builder().dir("/target").build();
+
+    let (result, dst) = run_operation_two_vfs(
+        src_vfs,
+        dst_vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path_id(0, "/data")],
+            destination: vfs_path_id(1, "/target"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(dst.read_content("/target/data/a.txt"), b"cross-vfs");
+    assert!(!dst.exists("/target/data/link"));
+    assert!(result.vfs.exists("/data/link"));
+}
+
 #[tokio::test]
 async fn test_copy_conflict_skip() {
     let vfs = MockVfs::builder()
@@ -3051,10 +3144,10 @@ async fn read_back_tar(bytes: &[u8], name: &str) -> std::collections::BTreeMap<S
                 continue;
             }
             let p = dir.join(&f.name);
-            if f.is_dir && !f.is_symlink {
+            if f.is_dir && !f.is_symlink() {
                 stack.push(p.clone());
             }
-            let content = if !f.is_dir && !f.is_symlink {
+            let content = if !f.is_dir && !f.is_symlink() {
                 let mut reader = vfs.open_read_async(&p).await.unwrap();
                 let mut data = Vec::new();
                 tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut data)
@@ -3068,8 +3161,8 @@ async fn read_back_tar(bytes: &[u8], name: &str) -> std::collections::BTreeMap<S
                 p.as_wire_str().trim_start_matches('/').to_string(),
                 TarCheck {
                     is_dir: f.is_dir,
-                    is_symlink: f.is_symlink,
-                    symlink_target: f.symlink_target.clone(),
+                    is_symlink: f.is_symlink(),
+                    symlink_target: f.symlink_target().map(str::to_owned),
                     mode: f.mode.as_ref().map(|m| m.0),
                     content,
                 },
@@ -3122,6 +3215,33 @@ async fn test_create_archive_tar_round_trip() {
     );
 }
 
+/// Packing skips a link whose target can't be read rather than storing an
+/// empty one.
+#[tokio::test]
+async fn test_create_archive_skips_an_unreadable_symlink() {
+    let vfs = MockVfs::builder()
+        .file("/data/hello.txt", b"hello world")
+        .unreadable_symlink("/data/link")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar.zst"),
+            options: archive_options(ArchiveFormat::TarZst),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let bytes = result.vfs.read_content("/out.tar.zst");
+    let entries = read_back_tar(&bytes, "check.tar.zst").await;
+    assert!(entries.contains_key("data/hello.txt"));
+    assert!(!entries.contains_key("data/link"));
+}
+
 /// Read a 7z produced by CreateArchive back through the 7z VFS.
 async fn read_back_7z(
     bytes: &[u8],
@@ -3167,7 +3287,7 @@ async fn read_back_7z(
             if f.is_dir {
                 stack.push(p.clone());
             }
-            let content = if !f.is_dir && !f.is_symlink {
+            let content = if !f.is_dir && !f.is_symlink() {
                 let mut reader = vfs.open_read_async(&p).await.unwrap();
                 let mut data = Vec::new();
                 tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut data)
@@ -3181,8 +3301,8 @@ async fn read_back_7z(
                 p.as_wire_str().trim_start_matches('/').to_string(),
                 TarCheck {
                     is_dir: f.is_dir,
-                    is_symlink: f.is_symlink,
-                    symlink_target: f.symlink_target.clone(),
+                    is_symlink: f.is_symlink(),
+                    symlink_target: f.symlink_target().map(str::to_owned),
                     mode: f.mode.as_ref().map(|m| m.0),
                     content,
                 },

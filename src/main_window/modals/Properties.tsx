@@ -289,8 +289,7 @@ export default function Properties({
   inode,
   device_id,
   is_dir,
-  is_symlink,
-  symlink_target,
+  symlink,
   can_set_metadata,
   mode_set: initialModeSet,
   mode_clear: initialModeClear,
@@ -387,11 +386,7 @@ export default function Properties({
     }
   }
 
-  const typeLabel = is_symlink
-    ? "Symbolic link"
-    : is_dir
-      ? "Directory"
-      : "File";
+  const typeLabel = symlink ? "Symbolic link" : is_dir ? "Directory" : "File";
 
   const canEdit = can_set_metadata && has_mode;
   const sheetEditable =
@@ -420,10 +415,13 @@ export default function Properties({
                   value={
                     <>
                       {typeLabel}
-                      {symlink_target && (
+                      {symlink && (
                         <span className={styles.symlinkTarget}>
                           {" "}
-                          &rarr; {symlink_target}
+                          &rarr;{" "}
+                          {symlink === "unknown"
+                            ? "target unknown"
+                            : symlink.target}
                         </span>
                       )}
                     </>

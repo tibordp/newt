@@ -1618,16 +1618,6 @@ impl Pane {
             .cloned()
     }
 
-    pub fn get_focused_symlink_target(&self) -> Option<String> {
-        let view_state = self.view_state.read();
-        let focused = view_state.focused.as_ref()?;
-        view_state
-            .files
-            .iter()
-            .find(|f| f.key() == focused)
-            .and_then(|f| f.symlink_target.clone())
-    }
-
     /// Returns true if the focused item is known to be a directory.
     /// Returns false for non-directories, unknown items, or if nothing is focused.
     pub fn focus_file(&self, name: &str) {

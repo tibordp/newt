@@ -7,6 +7,7 @@ import {
   isExecutable,
   isPackage,
   recursiveSize,
+  symlinkTarget,
 } from "./types";
 import { modeString } from "./utils";
 import { formatBytes } from "../lib/size";
@@ -53,7 +54,7 @@ function FileName({
   info: FileView;
   displayName: string;
 }) {
-  const { name, is_dir, is_symlink, is_hidden } = info;
+  const { name, is_dir, symlink, is_hidden } = info;
   const git = gitStatus(info);
   // A package looks like the file macOS presents it as.
   const folder = is_dir && !isPackage(info);
@@ -97,7 +98,7 @@ function FileName({
   return (
     <div
       className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${
-        is_symlink ? "symlink" : ""
+        symlink !== null ? "symlink" : ""
       } ${git ? `git-${git}` : ""}`}
     >
       <FileIcon
@@ -476,7 +477,12 @@ export const allColumns: ColumnDef[] = [
         name: "Link Target",
       },
     ],
-    render: (info) => <>{info.symlink_target ?? ""}</>,
+    render: (info) =>
+      info.symlink === "unknown" ? (
+        <span className={styles.sourceHint}>unknown</span>
+      ) : (
+        <>{symlinkTarget(info.symlink) ?? ""}</>
+      ),
   },
 ];
 

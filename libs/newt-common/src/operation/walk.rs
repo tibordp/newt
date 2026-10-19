@@ -1,4 +1,5 @@
 use super::*;
+use crate::vfs::Symlink;
 use crate::vfs::walk::{self, Control, Entry, Failed, Resume, Visitor};
 
 // --- Shared source-tree walk (copy and archive planning) ---
@@ -142,6 +143,33 @@ struct Collector<'a> {
     total_bytes: u64,
 }
 
+impl Collector<'_> {
+    /// The target of a link whose listing couldn't read it, asked about
+    /// rather than guessed: a link recreated without its target would point
+    /// nowhere. Retry reads the link again; `None` when the user skips it.
+    async fn unknown_link_target(&mut self, path: &Path) -> Result<Option<String>, crate::Error> {
+        let context = format!("Cannot read where {} points", shown(self.vfs, path));
+        let mut error = crate::Error::custom("the filesystem did not report the link's target");
+        loop {
+            match self
+                .reporter
+                .handle_io_error(error, &context, None, self.cancel, true)
+                .await?
+            {
+                IssueOutcome::Skip => return Ok(None),
+                IssueOutcome::Retry => {}
+            }
+            error = match cancellable(self.cancel, self.vfs.file_info(path)).await {
+                Ok(file) => match file.symlink {
+                    Some(Symlink::Target(target)) => return Ok(Some(target)),
+                    _ => crate::Error::custom("the filesystem did not report the link's target"),
+                },
+                Err(e) => e,
+            };
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Visitor for Collector<'_> {
     async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, crate::Error> {
@@ -150,7 +178,7 @@ impl Visitor for Collector<'_> {
         }
         let file = entry.file;
         let mut metadata = None;
-        if file.is_dir && !file.is_symlink && self.capture_directory_metadata {
+        if file.is_dir && !file.is_symlink() && self.capture_directory_metadata {
             loop {
                 match cancellable(self.cancel, self.vfs.get_metadata(entry.path)).await {
                     Ok(meta) => {
@@ -173,14 +201,19 @@ impl Visitor for Collector<'_> {
                 }
             }
         }
-        if !file.is_symlink && !file.is_dir && file.is_special() {
+        if !file.is_symlink() && !file.is_dir && file.is_special() {
             skip_special_file(self.reporter, self.vfs, entry.path).await?;
             return Ok(Control::Skip);
         }
-        let kind = if file.is_symlink {
-            WalkedKind::Symlink {
-                target: file.symlink_target.clone().unwrap_or_default(),
-            }
+        let kind = if let Some(link) = &file.symlink {
+            let target = match link {
+                Symlink::Target(target) => target.clone(),
+                Symlink::Unknown => match self.unknown_link_target(entry.path).await? {
+                    Some(target) => target,
+                    None => return Ok(Control::Skip),
+                },
+            };
+            WalkedKind::Symlink { target }
         } else if file.is_dir {
             WalkedKind::Directory
         } else {

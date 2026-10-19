@@ -143,7 +143,7 @@ pub trait Visitor: Send {
 /// count, as they do for `rm --one-file-system`.
 pub fn is_mount_point(parent_device: Option<u64>, file: &File) -> bool {
     file.is_dir
-        && !file.is_symlink
+        && !file.is_symlink()
         && matches!((parent_device, file.device_id), (Some(p), Some(d)) if p != d)
 }
 
@@ -384,11 +384,11 @@ impl<'a> Walker<'a> {
             return Ok(Flow::Continue);
         }
         let keep_path = child.root && self.options.follow_root;
-        if (self.options.follow_symlinks || keep_path) && child.file.is_symlink {
+        if (self.options.follow_symlinks || keep_path) && child.file.is_symlink() {
             let link_path = child.path.clone();
             let mut ancestry = (*child.ancestry).clone();
             let mut hops = 0;
-            while child.file.is_symlink {
+            while child.file.is_symlink() {
                 if hops >= MAX_SYMLINK_HOPS {
                     self.visitor.cycle(&child.path).await?;
                     return Ok(Flow::Continue);
@@ -450,7 +450,7 @@ impl<'a> Walker<'a> {
                 // What a `source` refers to lives in another VFS, which
                 // this one can't list.
                 child.file.is_dir
-                    && !child.file.is_symlink
+                    && !child.file.is_symlink()
                     && child.file.source.is_none()
                     && (child.root || !(mount_point && self.options.one_file_system))
             }
@@ -534,7 +534,7 @@ impl<'a> Walker<'a> {
                 }
                 if file.name == ".."
                     || !file.is_dir
-                    || file.is_symlink
+                    || file.is_symlink()
                     || file.source.is_some()
                     || (self.options.one_file_system
                         && is_mount_point(frame.dir.file.device_id, file))
@@ -722,7 +722,7 @@ impl<'a> Walker<'a> {
                 Opened::Stopped => return Ok(Flow::Stop),
             }
         }
-        if file.is_dir && !file.is_symlink {
+        if file.is_dir && !file.is_symlink() {
             return Ok(match self.open_dir(state, &path, file).await? {
                 Opened::Entered => Flow::Continue,
                 Opened::Passed => {
@@ -852,7 +852,7 @@ mod tests {
     #[async_trait]
     impl Visitor for Log {
         async fn entry(&mut self, e: Entry<'_>) -> Result<Control, Error> {
-            let kind = if e.file.is_symlink {
+            let kind = if e.file.is_symlink() {
                 "link"
             } else if e.file.is_dir {
                 "dir"

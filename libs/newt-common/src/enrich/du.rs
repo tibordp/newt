@@ -91,7 +91,7 @@ impl Enricher for DuEnricher {
         let walks: Vec<_> = listing
             .files
             .iter()
-            .filter(|f| f.name != ".." && f.is_dir && !f.is_symlink)
+            .filter(|f| f.name != ".." && f.is_dir && !f.is_symlink())
             .filter(|f| match scope {
                 EnrichScope::AllEntries => true,
                 EnrichScope::Entries(keys) => keys.iter().any(|k| k == f.key()),
@@ -162,7 +162,7 @@ impl Visitor for Sizer<'_> {
     async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, Error> {
         let file = entry.file;
         if file.is_dir {
-            if !file.is_symlink {
+            if !file.is_symlink() {
                 self.sink.emit_entry(
                     self.key.clone(),
                     Annotation::RecursiveSize {

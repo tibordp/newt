@@ -193,7 +193,7 @@ async fn remove_tree(vfs: &dyn Vfs, path: &Path) -> Result<(), crate::Error> {
     #[async_trait::async_trait]
     impl Visitor for Removal<'_> {
         async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, crate::Error> {
-            if !entry.file.is_dir || entry.file.is_symlink {
+            if !entry.file.is_dir || entry.file.is_symlink() {
                 self.vfs.remove_file(entry.path).await?;
             }
             Ok(Control::Descend)

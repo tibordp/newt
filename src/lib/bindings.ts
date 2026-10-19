@@ -3131,14 +3131,11 @@ inode: number | null;
  * Hardlink count (`st_nlink`) — consumers only need the
  * `(device_id, inode)` dedup for entries with more than one link.
  */
-hard_links: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+hard_links: number | null; is_dir: boolean; is_hidden: boolean; 
 /**
- * Raw link target as reported by the source FS. A string, not a path
- * type: it may be relative (`../x`) or otherwise un-normalizable, and
- * it crosses the agent↔host RPC boundary — no `std::path` there, its
- * meaning belongs to the source OS, not the receiver's.
+ * Set for a symbolic link (the entry itself, as `lstat` sees it).
  */
-symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
+symlink: Symlink | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
 /**
  * Raw Windows `FILE_ATTRIBUTE_*` bits, populated only by
  * Windows-shaped local listings (the Attr column renders them).
@@ -3159,11 +3156,11 @@ key: string | null;
  * `Vfs::redirect_target`).
  */
 source: VfsPath | null }
-export type FileDetails = { size: number; is_dir: boolean; is_symlink: boolean; 
+export type FileDetails = { size: number; is_dir: boolean; 
 /**
- * Raw link target as reported by the source FS (see `File::symlink_target`).
+ * See `File::symlink`.
  */
-symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
+symlink: Symlink | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
 /**
  * Why the underlying VFS reports the listing as intrinsically
@@ -3210,14 +3207,11 @@ inode: number | null;
  * Hardlink count (`st_nlink`) — consumers only need the
  * `(device_id, inode)` dedup for entries with more than one link.
  */
-hard_links: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+hard_links: number | null; is_dir: boolean; is_hidden: boolean; 
 /**
- * Raw link target as reported by the source FS. A string, not a path
- * type: it may be relative (`../x`) or otherwise un-normalizable, and
- * it crosses the agent↔host RPC boundary — no `std::path` there, its
- * meaning belongs to the source OS, not the receiver's.
+ * Set for a symbolic link (the entry itself, as `lstat` sees it).
  */
-symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
+symlink: Symlink | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
 /**
  * Raw Windows `FILE_ATTRIBUTE_*` bits, populated only by
  * Windows-shaped local listings (the Attr column renders them).
@@ -3429,7 +3423,11 @@ allocated_size: number | null;
 /**
  * Single-selection only, like the timestamps.
  */
-hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; 
+/**
+ * Single-selection only.
+ */
+symlink: Symlink | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
  */
@@ -3664,7 +3662,11 @@ allocated_size: number | null;
 /**
  * Single-selection only, like the timestamps.
  */
-hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; 
+/**
+ * Single-selection only.
+ */
+symlink: Symlink | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
  */
@@ -4454,6 +4456,24 @@ export type SizeUnits =
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
+/**
+ * What a symbolic link points at.
+ */
+export type Symlink = 
+/**
+ * The raw target as reported by the source FS. A string, not a path
+ * type: it may be relative (`../x`) or otherwise un-normalizable, and
+ * it crosses the agent↔host RPC boundary — no `std::path` there, its
+ * meaning belongs to the source OS, not the receiver's.
+ */
+{ target: string } | 
+/**
+ * A link whose target could not be read: `readlink` refused it (a
+ * `/proc` link of another user's process, a reparse point the platform
+ * can't parse), or an archive keeps it encrypted. Never stands for an
+ * empty target — what needs the target fails on the entry instead.
+ */
+"unknown"
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 

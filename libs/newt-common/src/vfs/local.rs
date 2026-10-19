@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FileChunk, FileDetails, FsStats, Mode, ToUnix, UserGroup};
+use crate::vfs::{File, FileChunk, FileDetails, FsStats, Mode, Symlink, ToUnix, UserGroup};
 
 use super::path_style::{
     local_breadcrumbs, local_display_path, metadata_traits_from_meta, navigable_parent,
@@ -469,8 +469,7 @@ impl Vfs for LocalVfs {
                                 inode: None,
                                 hard_links: None,
                                 is_dir: true,
-                                is_symlink: metadata.is_symlink(),
-                                symlink_target: None,
+                                symlink: metadata.is_symlink().then(|| read_symlink(parent)),
                                 is_hidden: false,
                                 user: user_field,
                                 group: group_field,
@@ -513,17 +512,13 @@ impl Vfs for LocalVfs {
                             let file_type = metadata.file_type();
                             let mut is_dir = file_type.is_dir();
 
-                            let symlink_target = if file_type.is_symlink() {
+                            let symlink = file_type.is_symlink().then(|| {
                                 let target_metadata = std::fs::metadata(entry.path());
                                 if let Ok(target_metadata) = target_metadata {
                                     is_dir = target_metadata.is_dir();
                                 }
-                                std::fs::read_link(entry.path())
-                                    .ok()
-                                    .map(|t| t.to_string_lossy().into_owned())
-                            } else {
-                                None
-                            };
+                                read_symlink(&entry.path())
+                            });
 
                             let (mode_field, user_field, group_field) = cache.owner_bits(&metadata);
                             let (allocated_size, device_id, inode, hard_links) =
@@ -536,8 +531,7 @@ impl Vfs for LocalVfs {
                                 inode,
                                 hard_links,
                                 is_dir,
-                                is_symlink: file_type.is_symlink(),
-                                symlink_target,
+                                symlink,
                                 is_hidden: is_hidden(&name, &metadata),
                                 user: user_field,
                                 group: group_field,
@@ -566,8 +560,9 @@ impl Vfs for LocalVfs {
                                 inode: None,
                                 hard_links: None,
                                 is_dir: file_type.map(|t| t.is_dir()).unwrap_or(false),
-                                is_symlink: file_type.map(|t| t.is_symlink()).unwrap_or(false),
-                                symlink_target: None,
+                                symlink: file_type
+                                    .is_some_and(|t| t.is_symlink())
+                                    .then(|| read_symlink(&entry.path())),
                                 is_hidden: name.starts_with('.'),
                                 user: None,
                                 group: None,
@@ -642,13 +637,7 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || {
             let symlink_meta = std::fs::symlink_metadata(&path)?;
             let is_symlink = symlink_meta.is_symlink();
-            let symlink_target = if is_symlink {
-                std::fs::read_link(&path)
-                    .ok()
-                    .map(|t| t.to_string_lossy().into_owned())
-            } else {
-                None
-            };
+            let symlink = is_symlink.then(|| read_symlink(&path));
 
             let meta = if is_symlink {
                 std::fs::metadata(&path).unwrap_or(symlink_meta)
@@ -663,8 +652,7 @@ impl Vfs for LocalVfs {
             Ok(FileDetails {
                 size,
                 is_dir,
-                is_symlink,
-                symlink_target,
+                symlink,
                 user: user_field,
                 group: group_field,
                 mode: mode_field,
@@ -729,13 +717,7 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
             let is_symlink = meta.is_symlink();
-            let symlink_target = if is_symlink {
-                std::fs::read_link(&path)
-                    .ok()
-                    .map(|t| t.to_string_lossy().into_owned())
-            } else {
-                None
-            };
+            let symlink = is_symlink.then(|| read_symlink(&path));
             let mut is_dir = meta.is_dir();
             if is_symlink && let Ok(target_meta) = std::fs::metadata(&path) {
                 is_dir = target_meta.is_dir();
@@ -755,8 +737,7 @@ impl Vfs for LocalVfs {
                 inode,
                 hard_links,
                 is_dir,
-                is_symlink,
-                symlink_target,
+                symlink,
                 user: user_field,
                 group: group_field,
                 mode: mode_field,
@@ -1726,6 +1707,17 @@ fn pwrite(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usiz
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
 // ---------------------------------------------------------------------------
+
+/// A link as `readlink` reports it; `Unknown` when it refuses, which `lstat`
+/// allowing doesn't rule out (`/proc/<pid>/cwd` of another user's process,
+/// a reparse point the platform can't parse).
+fn read_symlink(path: &std::path::Path) -> Symlink {
+    Symlink::from_read(
+        std::fs::read_link(path)
+            .ok()
+            .map(|t| t.to_string_lossy().into_owned()),
+    )
+}
 
 /// Whether a directory entry should be treated as hidden.
 ///

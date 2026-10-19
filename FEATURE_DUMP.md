@@ -189,7 +189,7 @@ User, Group and Mode show on Unix-shaped filesystems and Attr on Windows-shaped 
 | Extension | 60px | File extension only |
 | Modified / Accessed / Created | 145px | Compound date + time in one column |
 | Accessed/Created Date and Time | 80px each | Access / creation timestamp, date-only or split (headers "Acc. Time", "Cr. Time") |
-| Link Target | 150px | Symlink target path; not sortable |
+| Link Target | 150px | Symlink target path, or a dimmed `unknown` for a link whose target can't be read; not sortable |
 
 **VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar, zip and 7z archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3 and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
 
@@ -591,7 +591,7 @@ Opens a modal dialog with:
     - **Preserve sparse files** — zero runs are skipped and holes punched on the destination (Linux `fallocate`, macOS `F_PUNCHHOLE`, NTFS sparse flag).
     - **Apply source attributes to existing directories** — merged directories otherwise keep their own mode/times/owner.
     - **Stay on one filesystem** — rsync's `-x`: a mount point under the selection is copied as an empty directory. Off by default, since a backup of a tree with a volume mounted under it usually wants the volume too. A move's copy half follows the same rule, and its clean-up pass never removes a mount point or the directories above it (see Delete).
-    - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue).
+    - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue). A link is copied with its target verbatim. One whose target can't be read — `readlink` refuses it (`/proc/<pid>/cwd` of another user's process, a WSL-created link on Windows), or an archive keeps it encrypted — is never recreated pointing at nothing: it raises "Cannot read where … points" with Retry (which reads the link again) and Skip. Move leaves a skipped link at its source; Pack leaves it out of the archive.
     - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3; hidden while a canned ACL is chosen, which replaces them), and for an S3 destination a **Storage class** and **Object access** canned ACL.
   - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered, and only where they differ from their default — one left at its default is stored as unset, so it follows the default if that changes (extended attributes and streams default by platform). Link modes, storage class, canned ACL, "apply source attributes to existing directories", "stay on one filesystem" and the existing-files and existing-folders answers reset every time — each changes what gets written beyond a faithful copy or who can read it.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
@@ -682,7 +682,7 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 - Size (human-readable + exact byte count)
 - Size on disk (allocated bytes, `st_blocks`-based) — shown when the VFS reports it (local Unix files); diverges from Size for sparse files. Multi-select sums it the same way as Size.
 - Type (file / directory / symlink)
-- Symlink target path (if applicable)
+- Symlink target path (if applicable; "target unknown" for a link whose target can't be read)
 - Owner (name and numeric ID when available, e.g., "root (0)"; "(mixed)" across a selection that differs)
 - Group (name and numeric ID; likewise)
 - Modified, Accessed, Created timestamps (in `appearance.date_format` / `time_format`, else the locale's)
@@ -1306,7 +1306,7 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 
 **Operations NOT supported**: Copy within SFTP (cross-file copy goes through the host), filesystem stats, trash (plain Delete prompts for permanent deletion), `create_new` writes and no-replace renames (copy and move look before writing). v3 has no "file exists" status, so a rename refused by a server without `posix-rename` is classified by a stat of the target and reports `AlreadyExists`, which lets an approved overwrite clear the target and retry.
 
-**Symlink handling**: Reads symlink targets for display, stats targets to determine if they're directories.
+**Symlink handling**: Reads each link's target (in listings too, alongside the stat each link gets to tell whether it leads to a directory), so links copy, move and pack with their targets.
 
 **Display path**: `sftp://hostname/path/to/file` (`sftp://user@hostname/…` when mounted with a user)
 

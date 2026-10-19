@@ -363,10 +363,10 @@ async fn check_destination(
     // (through the link, as `cp -R` does); to anything else it is a link,
     // replaced by unlinking it.
     let merging = matches!(entry.kind, CopyEntryKind::Directory);
-    let directory = existing.is_dir && (merging || !existing.is_symlink);
+    let directory = existing.is_dir && (merging || !existing.is_symlink());
     let mismatch = match (&entry.kind, directory) {
         // Through a link, as `cp -R` goes: into whatever it points at.
-        (CopyEntryKind::Directory, true) if existing.is_symlink => return Ok(Destination::Merge),
+        (CopyEntryKind::Directory, true) if existing.is_symlink() => return Ok(Destination::Merge),
         (CopyEntryKind::Directory, true) => {
             let answer = folder_conflict(
                 reporter,
@@ -418,7 +418,7 @@ async fn check_destination(
     }
     // A write goes through a symlink to its target, and a symlink cannot
     // be created over anything: clear the way.
-    if existing.is_symlink || matches!(entry.kind, CopyEntryKind::Symlink { .. }) {
+    if existing.is_symlink() || matches!(entry.kind, CopyEntryKind::Symlink { .. }) {
         cancellable(cancel, dst_vfs.remove_file(&entry.dest)).await?;
     }
     Ok(Destination::Replace)

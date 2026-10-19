@@ -272,8 +272,8 @@ async fn udf_metadata_partition_and_symlinks() {
         .iter()
         .find(|f| f.name == "link_to_deeper")
         .unwrap();
-    assert!(link.is_symlink);
-    assert_eq!(link.symlink_target.as_deref(), Some("sub/deeper"));
+    assert!(link.is_symlink());
+    assert_eq!(link.symlink_target(), Some("sub/deeper"));
     assert!(link.is_dir, "symlink to a directory lists as enterable");
 
     // Paths resolve through symlinks.
@@ -291,7 +291,7 @@ async fn udf_metadata_partition_and_symlinks() {
 
     // file_info does not (listing semantics) but mirrors target dir-ness.
     let info = vfs.file_info(&vp("/link_to_deeper")).await.unwrap();
-    assert!(info.is_symlink);
+    assert!(info.is_symlink());
     assert!(info.is_dir);
 }
 

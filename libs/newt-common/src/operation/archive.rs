@@ -72,7 +72,7 @@ pub(super) async fn execute_create_archive(
         // sources is replaced rather than packed into its successor. When
         // it is all there is to pack, Overwrite would only empty it. A
         // symlink is replaced, not written through, so it can't lead to one.
-        if !existing.is_symlink
+        if !existing.is_symlink()
             && only_the_destination(&*dst_vfs, &sources, destination.vfs_id, &dst_path).await?
         {
             return Err(crate::Error::custom(format!(
@@ -91,7 +91,7 @@ pub(super) async fn execute_create_archive(
         {
             // A write goes through a symlink to its target: replace the
             // link instead.
-            IssueAction::Overwrite if existing.is_symlink => {
+            IssueAction::Overwrite if existing.is_symlink() => {
                 cancellable(&cancel, dst_vfs.remove_file(&dst_path)).await?;
             }
             IssueAction::Overwrite => {}

@@ -73,7 +73,7 @@ impl Visitor for DeleteCollector<'_> {
         }
         self.reporter
             .maybe_send_scanning((self.files.len() + self.dirs.len()) as u64, 0);
-        if !entry.file.is_dir || entry.file.is_symlink {
+        if !entry.file.is_dir || entry.file.is_symlink() {
             self.files.push(DeleteEntry {
                 path: entry.path.to_owned(),
                 is_dir: false,

@@ -37,6 +37,7 @@ import {
   FileRowContext,
   isExecutable,
   isPackage,
+  symlinkTarget,
   KEYBOARD_MENU_EVENT,
   REFOCUS_EVENT,
 } from "./types";
@@ -431,7 +432,10 @@ const FileRow = memo(
     prev.row.modified === next.row.modified &&
     prev.row.mode === next.row.mode &&
     prev.row.is_dir === next.row.is_dir &&
-    prev.row.is_symlink === next.row.is_symlink &&
+    // `symlink` is structurally fresh on every projection; compare it by
+    // what it shows.
+    (prev.row.symlink === null) === (next.row.symlink === null) &&
+    symlinkTarget(prev.row.symlink) === symlinkTarget(next.row.symlink) &&
     prev.row.cut === next.row.cut &&
     annotationsEqual(prev.row.annotations, next.row.annotations) &&
     prev.columns === next.columns &&
@@ -824,7 +828,7 @@ function FilterInput({
 function followKind(row: FileView | undefined): FollowKind {
   if (!row) return null;
   if (row.source_display) return "source";
-  return row.is_symlink ? "symlink" : null;
+  return row.symlink !== null ? "symlink" : null;
 }
 
 // --- Shared DnD helpers (used by both internal and external drag-and-drop) ---

@@ -254,8 +254,8 @@ pub(super) async fn execute_move(
 /// (through the link, as `cp -R` does), and to anything else a link that
 /// the move replaces.
 fn directories(source: &File, dest: &File) -> (bool, bool) {
-    let source_dir = source.is_dir && !source.is_symlink;
-    let dest_dir = dest.is_dir && (source_dir || !dest.is_symlink);
+    let source_dir = source.is_dir && !source.is_symlink();
+    let dest_dir = dest.is_dir && (source_dir || !dest.is_symlink());
     (source_dir, dest_dir)
 }
 

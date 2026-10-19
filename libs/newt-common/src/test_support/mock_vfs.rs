@@ -11,7 +11,7 @@ use crate::vfs::{
     Breadcrumb, DisplayPathMatch, MountRequest, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata,
     VfsSpaceInfo,
 };
-use crate::vfs::{File, Mode};
+use crate::vfs::{File, Mode, Symlink};
 
 // ---------------------------------------------------------------------------
 // Mock entry model
@@ -31,9 +31,8 @@ pub enum MockEntry {
         gid: u32,
     },
     Symlink {
-        /// Raw link target — flows straight into `File::symlink_target` /
-        /// `FileDetails::symlink_target` (both `Option<String>`).
-        target: String,
+        /// Flows straight into `File::symlink` / `FileDetails::symlink`.
+        target: Symlink,
     },
 }
 
@@ -493,14 +492,13 @@ impl MockVfs {
             let parent_matches = path.parent().map(Path::as_wire_str) == Some(parent.as_wire_str());
             if parent_matches && path.as_wire_str() != parent.as_wire_str() {
                 let name = path.file_name().unwrap().to_string();
-                let (is_dir, is_symlink, symlink_target, size, mode, user, group) = match entry {
+                let (is_dir, symlink, size, mode, user, group) = match entry {
                     MockEntry::File {
                         content,
                         mode,
                         uid,
                         gid,
                     } => (
-                        false,
                         false,
                         None,
                         Some(content.len() as u64),
@@ -510,7 +508,6 @@ impl MockVfs {
                     ),
                     MockEntry::Directory { mode, uid, gid } => (
                         true,
-                        false,
                         None,
                         None,
                         *mode,
@@ -518,7 +515,7 @@ impl MockVfs {
                         Some(crate::vfs::UserGroup::Id(*gid)),
                     ),
                     MockEntry::Symlink { target } => {
-                        (false, true, Some(target.clone()), None, 0o777, None, None)
+                        (false, Some(target.clone()), None, 0o777, None, None)
                     }
                 };
                 children.push(File {
@@ -531,8 +528,7 @@ impl MockVfs {
                     hard_links: None,
                     is_dir,
                     is_hidden: name.starts_with('.'),
-                    is_symlink,
-                    symlink_target,
+                    symlink,
                     user,
                     group,
                     mode: Some(Mode(mode)),
@@ -693,8 +689,7 @@ impl Vfs for MockVfs {
             }) => Ok(crate::vfs::FileDetails {
                 size: content.len() as u64,
                 is_dir: false,
-                is_symlink: false,
-                symlink_target: None,
+                symlink: None,
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
@@ -705,8 +700,7 @@ impl Vfs for MockVfs {
             Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::vfs::FileDetails {
                 size: 0,
                 is_dir: true,
-                is_symlink: false,
-                symlink_target: None,
+                symlink: None,
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
@@ -717,8 +711,7 @@ impl Vfs for MockVfs {
             Some(MockEntry::Symlink { target }) => Ok(crate::vfs::FileDetails {
                 size: 0,
                 is_dir: false,
-                is_symlink: true,
-                symlink_target: Some(target.clone()),
+                symlink: Some(target.clone()),
                 user: None,
                 group: None,
                 mode: None,
@@ -774,8 +767,7 @@ impl Vfs for MockVfs {
                     MockEntry::Symlink { target } => File {
                         name,
                         is_dir: false,
-                        is_symlink: true,
-                        symlink_target: Some(target.clone()),
+                        symlink: Some(target.clone()),
                         mode: Some(Mode(0o777)),
                         ..File::bare_dir("")
                     },
@@ -819,8 +811,7 @@ impl Vfs for MockVfs {
                 hard_links: None,
                 is_dir: false,
                 is_hidden: name.starts_with('.'),
-                is_symlink: false,
-                symlink_target: None,
+                symlink: None,
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
@@ -840,8 +831,7 @@ impl Vfs for MockVfs {
                 hard_links: None,
                 is_dir: true,
                 is_hidden: name.starts_with('.'),
-                is_symlink: false,
-                symlink_target: None,
+                symlink: None,
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
@@ -861,8 +851,7 @@ impl Vfs for MockVfs {
                 hard_links: None,
                 is_dir: false,
                 is_hidden: name.starts_with('.'),
-                is_symlink: true,
-                symlink_target: Some(target.clone()),
+                symlink: Some(target.clone()),
                 user: None,
                 group: None,
                 mode: Some(Mode(0o777)),
@@ -951,7 +940,7 @@ impl Vfs for MockVfs {
         entries.insert(
             link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: target.to_string(),
+                target: Symlink::Target(target.to_string()),
             },
         );
         Ok(())
@@ -1626,7 +1615,20 @@ impl MockVfsBuilder {
         self.entries.insert(
             link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: target.to_string(),
+                target: Symlink::Target(target.to_string()),
+            },
+        );
+        self
+    }
+
+    /// A link whose target can't be read (`Symlink::Unknown`).
+    pub fn unreadable_symlink(mut self, link: &str) -> Self {
+        let link = PathBuf::from_wire_str(link);
+        self.ensure_parents(&link);
+        self.entries.insert(
+            link.as_wire_str().to_string(),
+            MockEntry::Symlink {
+                target: Symlink::Unknown,
             },
         );
         self
