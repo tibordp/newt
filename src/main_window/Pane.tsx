@@ -2066,7 +2066,12 @@ function PaneInner(
     lastViewportReportRef.current = [-1, -1, -1];
     const container = containerRef.current;
     if (container) {
-      const firstVisible = Math.floor(container.scrollTop / rowHeight);
+      // Where the view is headed, if the cursor effect is waiting for the
+      // rows to scroll there: the old scroll position belongs to the
+      // previous directory, and reporting it after the cursor's would leave
+      // Rust a window that doesn't reach the cursor's rows.
+      const top = pendingCursorScrollRef.current ?? container.scrollTop;
+      const firstVisible = Math.floor(top / rowHeight);
       const visibleCount = Math.ceil(container.clientHeight / rowHeight);
       lastViewportReportRef.current = [firstVisible, visibleCount, -1];
       safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
