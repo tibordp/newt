@@ -5,6 +5,7 @@ import type { Scene } from "../types";
 const SEARCH: VfsInfo = {
   id: 3,
   name: "Search",
+  typeName: "search",
   hostLocal: false,
   display: () => PROJECT,
   rootLabel: PROJECT,

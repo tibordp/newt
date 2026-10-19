@@ -56,6 +56,8 @@ export type VfsInfo = {
   id: number;
   /// Pane header label ("Local", "S3", …).
   name: string;
+  /// The VFS's `type_name`, for its icon.
+  typeName: string;
   hostLocal: boolean;
   /// Display form of a path on this VFS.
   display: (path: string) => string;
@@ -66,6 +68,7 @@ export type VfsInfo = {
 export const LOCAL: VfsInfo = {
   id: 0,
   name: "Local",
+  typeName: "local",
   hostLocal: true,
   display: (p) => p,
   rootLabel: "/",
@@ -74,6 +77,7 @@ export const LOCAL: VfsInfo = {
 export const s3 = (id: number, bucket: string): VfsInfo => ({
   id,
   name: "S3",
+  typeName: "s3",
   hostLocal: false,
   display: (p) => `s3://${bucket}${p === "/" ? "" : p}`,
   rootLabel: `s3://${bucket}/`,
@@ -175,6 +179,7 @@ export function pane(spec: PaneSpec): PaneViewState {
     scroll_shift: 0,
     display_path: vfs.display(spec.path),
     vfs_display_name: vfs.name,
+    vfs_type_name: vfs.typeName,
     is_host_local: vfs.hostLocal,
     metadata_traits: { unix_owner: vfs.hostLocal, windows_attributes: false },
     breadcrumbs: breadcrumbs(vfs.id, spec.path, vfs.rootLabel),

@@ -6,6 +6,7 @@ const archivePath = `${HOME}/Downloads/walker-0.4.2.tar.zst`;
 const ARCHIVE: VfsInfo = {
   id: 2,
   name: "Archive",
+  typeName: "archive",
   hostLocal: false,
   display: (p) => `${archivePath}${p === "/" ? "" : p}`,
   rootLabel: "/",

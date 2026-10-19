@@ -4060,7 +4060,11 @@ selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: Fs
  * re-sort). Cumulative: the frontend scrolls by each change, in the
  * same render as the window that follows the move.
  */
-scroll_shift: number; display_path: string; vfs_display_name: string; is_host_local: boolean; 
+scroll_shift: number; display_path: string; vfs_display_name: string; 
+/**
+ * The VFS's `type_name`, for its icon.
+ */
+vfs_type_name: string; is_host_local: boolean; 
 /**
  * Which metadata families the pane's VFS populates — the frontend
  * filters the configured column set by these (no mode/user/group

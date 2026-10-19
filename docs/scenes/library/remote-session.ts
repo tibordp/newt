@@ -19,6 +19,7 @@ const prompt = `${E}1;32mdemo@build-01${E}0m:${E}1;34m/srv/app/releases${E}0m$ `
 const REMOTE: VfsInfo = {
   id: 0,
   name: "Remote",
+  typeName: "remote",
   hostLocal: false,
   display: (p) => p,
   rootLabel: "/",

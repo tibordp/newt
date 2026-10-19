@@ -13,6 +13,7 @@ import { DropdownMenu } from "../lib/menus";
 import { ContextMenu, isKeyboardContextMenu, openMenuAt } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
 import { useAfterGrace } from "../lib/useAfterGrace";
+import { useHeaderPlan } from "./headerFit";
 import {
   type FileIconGlyph,
   fileIconGlyph,
@@ -70,11 +71,14 @@ import { visibleName } from "../lib/bidi";
 
 function PathBreadcrumbs(props: {
   breadcrumbs: PaneBreadcrumb[];
+  /// Leading crumbs folded into a `⋯`.
+  hidden: number;
   paneHandle: number;
   displayPath: string;
   onMenuCloseAutoFocus: (e: Event) => void;
 }) {
-  const { breadcrumbs, paneHandle, displayPath, onMenuCloseAutoFocus } = props;
+  const { breadcrumbs, hidden, paneHandle, displayPath, onMenuCloseAutoFocus } =
+    props;
   const shortcuts = useCommandShortcuts();
 
   // The last breadcrumb gets the full display_path; earlier ones join labels.
@@ -88,7 +92,14 @@ function PathBreadcrumbs(props: {
 
   return (
     <>
+      {hidden > 0 && (
+        <FoldedCrumbs
+          crumbs={breadcrumbs.slice(0, hidden)}
+          paneHandle={paneHandle}
+        />
+      )}
       {breadcrumbs.map((crumb, i) => {
+        if (i < hidden) return null;
         const isLast = i === breadcrumbs.length - 1;
         return (
           <Fragment key={i}>
@@ -136,6 +147,73 @@ function PathBreadcrumbs(props: {
         );
       })}
     </>
+  );
+}
+
+/// A breadcrumb's label without its trailing separator, but a root's whole
+/// (`/`, `C:\`).
+function crumbName(crumb: PaneBreadcrumb, i: number): string {
+  return i > 0 ? crumb.label.replace(/[/\\]$/, "") : crumb.label;
+}
+
+/// The separator a breadcrumb's label ends with, if any.
+function crumbSeparator(crumb: PaneBreadcrumb | undefined): string {
+  const last = crumb?.label.slice(-1);
+  return last === "/" || last === "\\" ? last : "";
+}
+
+/// The `⋯` standing in for breadcrumbs folded out of a narrow header; it
+/// lists them, nearest first.
+function FoldedCrumbs({
+  crumbs,
+  paneHandle,
+}: {
+  crumbs: PaneBreadcrumb[];
+  paneHandle: number;
+}) {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <a
+          className={styles.foldedCrumbs}
+          href="#"
+          tabIndex={-1}
+          // No title of its own: the path's, the whole path, shows through.
+          aria-label="Show enclosing folders"
+          onClick={(e) => e.preventDefault()}
+        >
+          ⋯
+        </a>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className={menuStyles.content}
+          align="start"
+          sideOffset={4}
+          loop
+          // Portalled, but React still bubbles these to the header.
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          {crumbs
+            .map((crumb, i) => (
+              <DropdownMenu.Item
+                key={i}
+                className={menuStyles.item}
+                onSelect={() =>
+                  safe(commands.navigateToPath(paneHandle, crumb.path))
+                }
+              >
+                <span className={menuStyles.itemLabel}>
+                  {visibleName(crumbName(crumb, i))}
+                </span>
+              </DropdownMenu.Item>
+            ))
+            .reverse()}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+      {crumbSeparator(crumbs[crumbs.length - 1])}
+    </DropdownMenu.Root>
   );
 }
 
@@ -413,8 +491,35 @@ function within(location: string, path: string): boolean {
   );
 }
 
+/// The selector's face: the filesystem's name, or its icon when compact.
+function VfsSelectorLabel({
+  name,
+  typeName,
+  compact,
+}: {
+  name: string;
+  typeName: string;
+  compact: boolean;
+}) {
+  const icon = compact ? VFS_ICONS[typeName] : undefined;
+  return (
+    <>
+      {icon ? (
+        <span className={styles.vfsSelectorIcon} aria-hidden>
+          {icon}
+        </span>
+      ) : (
+        name
+      )}{" "}
+      <span aria-hidden>&#x25BE;</span>
+    </>
+  );
+}
+
 function VfsSelector({
   vfsDisplayName,
+  vfsTypeName,
+  compact,
   vfsTargets,
   paneHandle,
   activeVfsId,
@@ -422,6 +527,8 @@ function VfsSelector({
   open,
 }: {
   vfsDisplayName: string;
+  vfsTypeName: string;
+  compact: boolean;
   vfsTargets: VfsTarget[];
   paneHandle: number;
   activeVfsId: number;
@@ -458,7 +565,11 @@ function VfsSelector({
           className={styles.vfsSelector}
           type="button"
           tabIndex={-1}
-          title={shortcuts.label("Switch filesystem", "select_vfs")}
+          aria-label={compact ? vfsDisplayName : undefined}
+          title={
+            (compact ? `${vfsDisplayName} · ` : "") +
+            shortcuts.label("Switch filesystem", "select_vfs")
+          }
           onClick={(e) => {
             e.stopPropagation();
             commands.dialog("select_vfs", paneHandle);
@@ -469,7 +580,11 @@ function VfsSelector({
             safeSilent(commands.focus(paneHandle, null));
           }}
         >
-          {vfsDisplayName} <span aria-hidden>&#x25BE;</span>
+          <VfsSelectorLabel
+            name={vfsDisplayName}
+            typeName={vfsTypeName}
+            compact={compact}
+          />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -773,11 +888,47 @@ function highlightDropTarget(
   }
 }
 
+/// The breadcrumbs and the `⋯`, laid out at their natural widths for
+/// `useHeaderPlan` to measure. Clipped to nothing, so it neither shows nor
+/// overflows.
+function HeaderMeasure({
+  ref,
+  breadcrumbs,
+}: {
+  ref: React.Ref<HTMLDivElement>;
+  breadcrumbs: PaneBreadcrumb[];
+}) {
+  const last = breadcrumbs.length - 1;
+  return (
+    <div className={styles.headerMeasure} aria-hidden>
+      <div ref={ref}>
+        {breadcrumbs.map((crumb, i) => (
+          <span key={i} data-measure="crumb">
+            <a
+              className={`${styles.pathBreadcrumb} ${i === last ? styles.pathBreadcrumbCurrent : ""}`}
+            >
+              {visibleName(crumb.label)}
+            </a>
+            {crumb.note && (
+              <span className={styles.pathBreadcrumbNote}>
+                {` ${crumb.note.text}`}
+              </span>
+            )}
+          </span>
+        ))}
+        <span data-measure="ellipsis">
+          <a className={styles.foldedCrumbs}>⋯</a>
+          {crumbSeparator(breadcrumbs[0])}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /// Branch indicator for the pane header, fed by the git enricher's
 /// context badge. Quiet by design: muted text, seti git glyph, a `*`
 /// suffix for uncommitted changes, ↑/↓ only when ahead/behind.
 function GitBranchBadge({ badge }: { badge: ContextBadge }) {
-  if (!("git_branch" in badge) || !badge.git_branch.name) return null;
   const branch = badge.git_branch;
   const git = setiGlyph("git");
   const parts = [branch.name + (branch.dirty ? "*" : "")];
@@ -876,6 +1027,7 @@ function PaneInner(
     stats,
     breadcrumbs,
     vfs_display_name,
+    vfs_type_name,
     metadata_traits,
     context_badges,
     enrichment_activity,
@@ -939,6 +1091,28 @@ function PaneInner(
   const locale = useLocale();
   const formatBytes = useFormatBytes();
   const sizeUnits = useSizeUnits();
+
+  const showHeader =
+    preferences?.settings.appearance?.show_pane_header !== false;
+  const badges = (context_badges ?? []).filter((b) => b.git_branch.name);
+  const freeSpace =
+    fs_stats?.available_bytes !== undefined
+      ? `${formatBytes(fs_stats.available_bytes)} free`
+      : null;
+  const headerRef = useRef<HTMLDivElement>(null);
+  const headerMeasureRef = useRef<HTMLDivElement>(null);
+  const headerPlan = useHeaderPlan(
+    headerRef,
+    headerMeasureRef,
+    JSON.stringify([
+      showHeader,
+      vfs_display_name,
+      vfs_type_name,
+      breadcrumbs,
+      badges,
+      freeSpace,
+    ]),
+  );
 
   // The key that switches this pane into filter mode. Rebindable like any
   // other command (`start_filter`), which matters for layouts where `/`
@@ -2135,12 +2309,17 @@ function PaneInner(
         }
       />
       <div className={styles.headerArea}>
-        {preferences?.settings.appearance?.show_pane_header !== false ? (
+        {showHeader ? (
           <ContextMenu.Root>
             <ContextMenu.Trigger asChild>
               <div
+                ref={headerRef}
                 className={`${styles.header} ${active ? styles.headerActive : current ? styles.headerCurrent : ""}`}
               >
+                <HeaderMeasure
+                  ref={headerMeasureRef}
+                  breadcrumbs={breadcrumbs}
+                />
                 <span className={styles.focusDot} aria-hidden />
                 {swappable && (
                   <button
@@ -2169,6 +2348,8 @@ function PaneInner(
                 )}
                 <VfsSelector
                   vfsDisplayName={vfs_display_name}
+                  vfsTypeName={vfs_type_name}
+                  compact={headerPlan.compactVfs}
                   vfsTargets={vfsTargets}
                   paneHandle={paneHandle}
                   activeVfsId={path.vfs_id}
@@ -2180,18 +2361,21 @@ function PaneInner(
                   role="navigation"
                   aria-label="Path"
                   title={props.display_path}
+                  data-fit=""
                 >
                   <PathBreadcrumbs
                     breadcrumbs={breadcrumbs}
+                    hidden={headerPlan.hiddenCrumbs}
                     paneHandle={paneHandle}
                     displayPath={props.display_path}
                     onMenuCloseAutoFocus={refocusPane}
                   />
                 </div>
-                {(context_badges ?? []).map((badge, i) => (
-                  <GitBranchBadge key={i} badge={badge} />
-                ))}
-                {fs_stats?.available_bytes !== undefined && (
+                {headerPlan.gitBadge &&
+                  badges.map((badge, i) => (
+                    <GitBranchBadge key={i} badge={badge} />
+                  ))}
+                {freeSpace !== null && headerPlan.freeSpace && (
                   <button
                     type="button"
                     className={styles.freeSpace}
@@ -2206,7 +2390,7 @@ function PaneInner(
                       commands.dialog("root_properties", paneHandle);
                     }}
                   >
-                    {formatBytes(fs_stats.available_bytes)} free
+                    {freeSpace}
                   </button>
                 )}
                 <button
@@ -2247,6 +2431,8 @@ function PaneInner(
           <div className={styles.hiddenAnchor} aria-hidden>
             <VfsSelector
               vfsDisplayName={vfs_display_name}
+              vfsTypeName={vfs_type_name}
+              compact={false}
               vfsTargets={vfsTargets}
               paneHandle={paneHandle}
               activeVfsId={path.vfs_id}

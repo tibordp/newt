@@ -971,10 +971,12 @@ impl Pane {
                 .vfs_info
                 .display_name(ws.path.vfs_id)
                 .unwrap_or_default();
+            ws.vfs_type_name = desc.type_name().to_string();
             ws.metadata_traits = desc.metadata_traits(&meta);
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();
+            ws.vfs_type_name = String::new();
             ws.metadata_traits = Default::default();
         }
         ws.is_host_local = self.vfs_info.is_host_local(ws.path.vfs_id);
@@ -1806,6 +1808,8 @@ pub struct PaneViewState {
     pub scroll_shift: i32,
     pub display_path: String,
     pub vfs_display_name: String,
+    /// The VFS's `type_name`, for its icon.
+    pub vfs_type_name: String,
     pub is_host_local: bool,
     /// Which metadata families the pane's VFS populates — the frontend
     /// filters the configured column set by these (no mode/user/group
