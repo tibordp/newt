@@ -30,7 +30,6 @@ globset = "0.4"
 mime_guess = "2"
 kamadak-exif = "0.6"
 parking_lot = "0.12"
-treediff = { version = "5", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }
 fillyfoal = { git = "https://github.com/tibordp/fillyfoal" }
 tokio = { version = "1", features = ["full"] }

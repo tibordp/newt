@@ -20,6 +20,7 @@ use crate::common::Error;
 use crate::common::UpdatePublisher;
 use crate::main_window::session::VfsInfo;
 use crate::session_memory::PaneLocation;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -1781,7 +1782,7 @@ pub struct PaneViewState {
     pub file_window: FileWindow,
     pub focused: Option<String>,
     /// Selected filenames intersected with the current window (for frontend rendering).
-    pub selected: HashSet<String>,
+    pub selected: BTreeSet<String>,
     #[serde(skip)]
     all_selected: HashSet<String>,
     #[serde(skip)]

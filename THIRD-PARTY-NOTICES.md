@@ -147,7 +147,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-739 crates, the superset across every target platform and feature.
+738 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -1251,8 +1251,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright 2019 Artúr Barnabás Kovács
   tray-icon 0.25.1 — MIT OR Apache-2.0
       Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
-  treediff 5.0.0 — MIT/Apache-2.0
-      Copyright (c) 2016 Alex Crichton
   triomphe 0.1.16 — MIT OR Apache-2.0
       Copyright (c) 2019 Manish Goregaokar
   try-lock 0.2.5 — MIT

@@ -39,8 +39,8 @@ use tauri::Wry;
 
 use crate::GlobalContext;
 use crate::common::Error;
-use crate::common::UpdatePublisher;
 use crate::common::specta_as;
+use crate::common::{KeyedArray, PathSegment, UpdatePublisher};
 use crate::main_window::session::VfsInfo;
 use crate::session_memory::{
     NormalBounds, SessionIdentity, SessionLocations, SessionStart, WindowGeometry,
@@ -1143,6 +1143,19 @@ impl serde::Serialize for MountSummaryState {
     }
 }
 
+/// A pane's window rows go by entry (`File::key()`), so entries sorting in
+/// above the window patch as the rows that entered and left it. The path
+/// names wire fields: renaming one quietly turns the rows positional again.
+const KEYED_ARRAYS: &[KeyedArray] = &[KeyedArray {
+    path: &[
+        PathSegment::Field("panes"),
+        PathSegment::Any,
+        PathSegment::Field("file_window"),
+        PathSegment::Field("items"),
+    ],
+    id_fields: &["key", "name"],
+}];
+
 /// The `update:main_window` payload, borrowing the live state. Serializing
 /// through this derive keeps the wire shape and `MainWindowState` in
 /// `bindings.ts` one and the same.
@@ -1455,11 +1468,10 @@ impl MainWindowContext {
             .runtime_state()
             .state()
             .show_hidden;
-        let publisher = Arc::new(UpdatePublisher::new(
-            window.clone(),
-            "main_window",
-            global_state.clone(),
-        ));
+        let publisher = Arc::new(
+            UpdatePublisher::new(window.clone(), "main_window", global_state.clone())
+                .with_keyed_arrays(KEYED_ARRAYS),
+        );
         tauri::async_runtime::spawn(crate::notifications::notify_prompts(
             window.clone(),
             global_state.operations.prompts(),

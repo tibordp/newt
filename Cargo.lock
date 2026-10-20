@@ -4109,7 +4109,6 @@ dependencies = [
  "tokio-util",
  "toml 1.1.6+spec-1.1.0",
  "toml_edit 0.25.15+spec-1.1.0",
- "treediff",
  "url",
  "uuid",
  "webkit2gtk",
@@ -7234,15 +7233,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "treediff"
-version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2ce481b2b7c2534fe7b5242cccebf37f9084392665c6a3783c414a1bada5432"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
