@@ -987,7 +987,7 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
 
 ### PDF Mode
 
-- Rendered via PDF.js with a custom toolbar (not a browser iframe).
+- Rendered via PDF.js with a custom toolbar (not a browser iframe). PDF.js needs a recent web engine — Safari 18 or later on macOS, a WebKitGTK of the same age on Linux; on an older one PDF mode shows why it can't render, and every other mode works as usual.
 - Links in a document open in the default browser or mail client. No Newt window ever navigates away from Newt itself: a navigation to anywhere else (a link, a script) is cancelled, web and mail links are handed to the system, and requests for new windows are refused.
 - **Toolbar**: Previous/Next page buttons, page display ("1 / 42"), zoom in/out/fit buttons, zoom percentage.
 - **Keyboard**: `=` (also `+`, Shift+=) zoom in, `-` zoom out, `0` back to PDF.js's automatic fit (the shared, rebindable `viewer_zoom_*` commands — Mod+= and friends stay webview zoom).

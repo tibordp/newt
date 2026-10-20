@@ -24,7 +24,10 @@
     "longDescription": "A keyboard-driven dual-pane file manager with an integrated terminal, SSH remoting, and S3/SFTP/archive mounts.",
     "license": "GPL-3.0-or-later",
     "licenseFile": "../LICENSE",
-    "copyright": "Copyright © 2023-2026 The Newt Authors"
+    "copyright": "Copyright © 2023-2026 The Newt Authors",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
   },
   "productName": "Newt",
   "version": "0.1.0",

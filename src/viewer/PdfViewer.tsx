@@ -1,22 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatBytes } from "../lib/size";
 
-import * as pdfjsLib from "pdfjs-dist";
-import {
+import type {
   PDFViewer as PDFJSViewer,
   EventBus,
-  PDFLinkService,
-} from "pdfjs-dist/web/pdf_viewer.mjs";
-import "pdfjs-dist/web/pdf_viewer.css";
-import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+} from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
+import "pdfjs-dist/legacy/web/pdf_viewer.css";
 
 import styles from "./Viewer.module.scss";
 import { type ViewerMode } from "./helpers";
 import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { useViewerHost } from "./host";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+import { pdfjs, type Pdfjs } from "./pdfjs";
 
 export interface PdfViewerProps {
   filePath: string;
@@ -41,18 +37,34 @@ export function PdfViewer({
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(0);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdf, setPdf] = useState<Pdfjs | null>(null);
 
-  // Initialize PDFViewer once
+  useEffect(() => {
+    let cancelled = false;
+    pdfjs.then(
+      (loaded) => {
+        if (!cancelled) setPdf(loaded);
+      },
+      (err) => {
+        if (!cancelled) setPdfError(`PDF support failed to load: ${err}`);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Initialize PDFViewer once pdf.js is in
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !pdf) return;
 
-    const eventBus = new EventBus();
+    const eventBus = new pdf.viewer.EventBus();
     eventBusRef.current = eventBus;
 
-    const linkService = new PDFLinkService({ eventBus });
+    const linkService = new pdf.viewer.PDFLinkService({ eventBus });
 
-    const viewer = new PDFJSViewer({
+    const viewer = new pdf.viewer.PDFViewer({
       container,
       eventBus,
       linkService,
@@ -76,7 +88,7 @@ export function PdfViewer({
       viewerInstanceRef.current = null;
       eventBusRef.current = null;
     };
-  }, []);
+  }, [pdf]);
 
   useEffect(() => {
     if (!viewerHost.embedded) containerRef.current?.focus();
@@ -85,10 +97,10 @@ export function PdfViewer({
   // Load PDF document when fileUrl changes
   useEffect(() => {
     const viewer = viewerInstanceRef.current;
-    if (!viewer) return;
+    if (!viewer || !pdf) return;
 
     let cancelled = false;
-    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
+    const loadingTask = pdf.lib.getDocument({ url: fileUrl });
 
     loadingTask.promise.then(
       (doc) => {
@@ -108,7 +120,7 @@ export function PdfViewer({
       cancelled = true;
       loadingTask.destroy();
     };
-  }, [fileUrl]);
+  }, [pdf, fileUrl]);
 
   const shortcuts = useCommandShortcuts();
 

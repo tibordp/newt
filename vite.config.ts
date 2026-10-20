@@ -19,8 +19,10 @@ export default defineConfig(async () => ({
   build: {
     // One platform-independent bundle for every target (CI builds the
     // frontend once and shares it across all packages), so target the
-    // lowest common denominator: WebKit (macOS/Linux WebViews).
-    target: "safari13",
+    // lowest common denominator: WebKit (macOS/Linux WebViews). 16.4 is what
+    // the app's own code needs (color-mix, @container, regex lookbehind);
+    // macOS 12, the native floor, updates to Safari 17.6.
+    target: "safari16.4",
     // don't minify for debug builds
     minify: !process.env.TAURI_DEBUG ? true : false,
     // produce sourcemaps for debug builds
