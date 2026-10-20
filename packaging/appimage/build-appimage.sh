@@ -8,6 +8,10 @@ set -euo pipefail
 # AppImage bundler, which forces GDK_BACKEND=x11 and GTK_THEME and leaks
 # LD_LIBRARY_PATH & co. into every process Newt spawns.
 #
+# The binary needs an AppImage build of its own: built with
+# NEWT_SYSTEM_AGENT_DIR=../share/newt/agents (agents found relative to it,
+# wherever the image is mounted) and `--features elevate-agent-copy`.
+#
 # Required env:
 #   VERSION   — version for the output filename (e.g. 0.1.0)
 #

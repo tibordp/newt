@@ -70,7 +70,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-attempt", required=True, type=int)
-    parser.add_argument("--artifact-set", choices=("lean", "full"), required=True)
     return parser.parse_args()
 
 
@@ -127,7 +126,6 @@ def main() -> None:
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "run_id": args.run_id,
         "run_attempt": args.run_attempt,
-        "artifact_set": args.artifact_set,
         "artifacts": sorted(
             manifest_artifacts,
             key=lambda item: (

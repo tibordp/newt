@@ -99,7 +99,6 @@ Release engineering:
 - One version source (`src-tauri/Cargo.toml`, `package.json` and `tauri.conf.json` each say 0.1.0 independently), a tag-driven release workflow, and a mapping onto deb (`1.0.0~rc.1`), rpm (no `-`) and MSI (numeric only) versions. Same-version snapshots don't upgrade under apt/dnf.
 - Sign Windows builds (MSI, `newt.exe`, and `newt-agent.exe`, which UAC shows as "Unknown publisher" for elevated sessions).
 - CI on `macos-latest` and `windows-latest` (clippy + tests); today only Linux builds on push. Pin the toolchain (`rust-toolchain.toml`).
-- Elevated sessions from the AppImage: root can't exec the agent from the FUSE mount. `NEWT_AGENT_DIR` also leaks into terminal shells.
 - No CI step test-installs a Linux package.
 - `cargo deny` (licences, advisories; bincode 1.3 is unmaintained).
 - `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint.

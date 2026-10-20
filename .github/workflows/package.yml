@@ -1,13 +1,15 @@
 name: Package
 
+# Packages each push to master once the Build workflow has passed on it.
+# A workflow_run workflow runs in the default branch's context, where
+# `github.sha` is whatever master's tip is by then: everything here checks
+# out and labels COMMIT, the commit Build passed on.
 on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+    branches: [master]
   workflow_dispatch:
-    inputs:
-      set:
-        description: Artifact set
-        type: choice
-        options: [lean, full]
-        default: lean
 
 concurrency:
   group: package-${{ github.ref }}
@@ -15,19 +17,23 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
-  # ─── Stage 0: Resolve the artifact set into build matrices ───
+  # ─── Stage 0: Build matrices ───
   #
-  # lean (default): x86_64 Windows + Linux (AppImage + latest major of
-  # each supported distro) and aarch64 macOS.
-  # full: everything — all distro releases, the arm64 Linux mirror,
-  # aarch64 Windows and x86_64 macOS.
-  # Linux legs live in .github/package-matrix.yml (tier-tagged).
+  # Every distro release, x86_64 and arm64 (Linux legs live in
+  # .github/package-matrix.yml), both macOS and both Windows arches.
 
   plan:
     name: Plan
     runs-on: ubuntu-latest
+    # Build also runs for pull requests, whose head branch may be a fork's
+    # `master`: only a passing push qualifies.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     outputs:
       linux: ${{ steps.plan.outputs.linux }}
       macos: ${{ steps.plan.outputs.macos }}
@@ -35,6 +41,8 @@ jobs:
       signed: ${{ steps.signing.outputs.signed }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
       # macOS signing and notarization are all or nothing: with only part of
       # the secrets Tauri signs but skips notarization with a mere warning,
       # and Gatekeeper then blocks the app. Upstream requires all of them; a
@@ -63,26 +71,19 @@ jobs:
             exit 1
           fi
       - id: plan
-        env:
-          SET: ${{ inputs.set }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import json, os, yaml
+          import json, yaml
 
-          full = os.environ["SET"] == "full"
-          linux = []
-          for leg in yaml.safe_load(open(".github/package-matrix.yml")):
-              if not full and leg["tier"] != "lean":
-                  continue
-              if not full and leg.get("lean_pkg") is False:
-                  leg["skip_pkg"] = True
-              linux.append(leg)
-
-          macos = [{"arch": "aarch64", "target": "aarch64-apple-darwin"}]
-          windows = [{"arch": "x86_64", "target": "x86_64-pc-windows-msvc", "msi_arch": "x64"}]
-          if full:
-              macos.append({"arch": "x86_64", "target": "x86_64-apple-darwin"})
-              windows.append({"arch": "aarch64", "target": "aarch64-pc-windows-msvc", "msi_arch": "arm64"})
+          linux = yaml.safe_load(open(".github/package-matrix.yml"))
+          macos = [
+              {"arch": "aarch64", "target": "aarch64-apple-darwin"},
+              {"arch": "x86_64", "target": "x86_64-apple-darwin"},
+          ]
+          windows = [
+              {"arch": "x86_64", "target": "x86_64-pc-windows-msvc", "msi_arch": "x64"},
+              {"arch": "aarch64", "target": "aarch64-pc-windows-msvc", "msi_arch": "arm64"},
+          ]
 
           for key, legs in {"linux": linux, "macos": macos, "windows": windows}.items():
               print(f"{key}={json.dumps(legs)}")
@@ -114,6 +115,8 @@ jobs:
             runner: macos-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -178,10 +181,13 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    needs: plan
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -216,7 +222,7 @@ jobs:
       - name: Install system dependencies
         run: |
           case "${{ matrix.pkg_type }}" in
-            deb)
+            deb|appimage)
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
@@ -234,6 +240,8 @@ jobs:
           esac
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
 
       - name: Install Rust
         run: |
@@ -276,16 +284,19 @@ jobs:
           done
           chmod +x */newt-agent
 
+      # The AppImage runs from wherever it is mounted, so it finds agents
+      # relative to its binary; the native packages install to /usr.
       - name: Build binary
         env:
-          NEWT_SYSTEM_AGENT_DIR: /usr/share/newt/agents
+          NEWT_SYSTEM_AGENT_DIR: ${{ matrix.pkg_type == 'appimage' && '../share/newt/agents' || '/usr/share/newt/agents' }}
+          FEATURES: ${{ matrix.pkg_type == 'appimage' && 'custom-protocol,elevate-agent-copy' || 'custom-protocol' }}
           CARGO_PROFILE_RELEASE_STRIP: symbols
         run: |
           . "$HOME/.cargo/env"
-          cargo build --release -p newt --features custom-protocol
+          cargo build --release -p newt --features "$FEATURES"
 
       - name: Build .deb
-        if: matrix.pkg_type == 'deb' && !matrix.skip_pkg
+        if: matrix.pkg_type == 'deb'
         env:
           VERSION: ${{ needs.frontend.outputs.version }}
           DEPS: ${{ matrix.runtime_deps }}
@@ -312,14 +323,13 @@ jobs:
           VERSION: ${{ needs.frontend.outputs.version }}
         run: packaging/arch/build-pkg.sh
 
-      # Slim try-it-out artifact: same binary/payload as the .deb, no
-      # bundled libraries (needs system WebKitGTK 4.1 — same runtime
-      # deps as the native packages). Deliberately not `cargo tauri
-      # build --bundles appimage`: tauri's bundler forces
-      # GDK_BACKEND=x11 / GTK_THEME and its exports leak into shells
-      # spawned from Newt's terminal.
+      # Slim try-it-out artifact: no bundled libraries (needs system
+      # WebKitGTK 4.1 — same runtime deps as the native packages).
+      # Deliberately not `cargo tauri build --bundles appimage`: tauri's
+      # bundler forces GDK_BACKEND=x11 / GTK_THEME and its exports leak
+      # into shells spawned from Newt's terminal.
       - name: Build AppImage
-        if: matrix.appimage
+        if: matrix.pkg_type == 'appimage'
         env:
           VERSION: ${{ needs.frontend.outputs.version }}
           ARCH: ${{ matrix.appimage_arch }}
@@ -333,7 +343,7 @@ jobs:
           packaging/appimage/build-appimage.sh
 
       - uses: actions/upload-artifact@v6
-        if: matrix.appimage
+        if: matrix.pkg_type == 'appimage'
         with:
           name: package-appimage-${{ matrix.appimage_arch }}
           path: "*.AppImage"
@@ -341,7 +351,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v6
-        if: ${{ !matrix.skip_pkg }}
+        if: matrix.pkg_type != 'appimage'
         with:
           name: package-${{ matrix.distro }}
           path: |
@@ -353,7 +363,7 @@ jobs:
 
   # ─── Stage 3b: macOS .dmg ───
 
-  # Both legs build on the arm runner; the x86_64 leg (full set only)
+  # Both legs build on the arm runner; the x86_64 leg
   # cross-compiles, so --target is always explicit.
   package-macos:
     name: Package (macOS ${{ matrix.arch }})
@@ -365,6 +375,8 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.macos) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -489,6 +501,8 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.windows) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -557,10 +571,12 @@ jobs:
       AWS_REGION: eu-west-1
       AWS_ROLE_ARN: ${{ secrets.NEWT_AWS_ROLE_ARN }}
       S3_BUCKET: ${{ secrets.NEWT_S3_BUCKET }}
-      ARTIFACT_PREFIX: ${{ github.sha }}/${{ github.run_id }}-${{ github.run_attempt }}
+      ARTIFACT_PREFIX: ${{ github.event.workflow_run.head_sha || github.sha }}/${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.COMMIT }}
 
       - name: Download package artifacts
         uses: actions/download-artifact@v8
@@ -575,11 +591,10 @@ jobs:
           --artifacts-dir package-artifacts
           --output-dir publish
           --artifact-prefix "$ARTIFACT_PREFIX"
-          --commit "${{ github.sha }}"
+          --commit "$COMMIT"
           --version "${{ needs.frontend.outputs.version }}"
           --run-id "${{ github.run_id }}"
           --run-attempt "${{ github.run_attempt }}"
-          --artifact-set "${{ inputs.set }}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.1.1

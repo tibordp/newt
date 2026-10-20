@@ -22,6 +22,4 @@ EOF
     exit 127
 fi
 
-# Agents resolve from the mounted AppDir (runtime override; the
-# compiled-in /usr/share/newt/agents only exists once installed).
-NEWT_AGENT_DIR="$HERE/usr/share/newt/agents" exec "$HERE/usr/bin/newt" "$@"
+exec "$HERE/usr/bin/newt" "$@"

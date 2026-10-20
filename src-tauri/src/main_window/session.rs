@@ -167,7 +167,8 @@ use newt_common::agent_resolver::{agent_file_name, local_agent_triple};
 
 /// Host-side resolver. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
-/// 2. `NEWT_SYSTEM_AGENT_DIR` compile-time path (distro packages)
+/// 2. `NEWT_SYSTEM_AGENT_DIR` compile-time path (packages); a relative one
+///    is relative to the executable's directory
 /// 3. Tauri resource dir (`agents/` inside the bundled app)
 /// 4. `agents/` relative fallback (legacy/dev)
 pub struct TauriAgentResolver {
@@ -184,7 +185,15 @@ impl TauriAgentResolver {
         }
 
         if let Some(dir) = option_env!("NEWT_SYSTEM_AGENT_DIR") {
-            dirs.push(std::path::PathBuf::from(dir));
+            let dir = std::path::Path::new(dir);
+            if dir.is_absolute() {
+                dirs.push(dir.to_path_buf());
+            } else if let Some(exe_dir) = std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|p| p.join(dir)))
+            {
+                dirs.push(exe_dir);
+            }
         }
 
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
@@ -1051,6 +1060,8 @@ impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
 #[cfg(target_os = "linux")]
 async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
     let agent_path = agent_resolver.find_local_agent_binary()?;
+    #[cfg(feature = "elevate-agent-copy")]
+    let agent_path = stage_agent_for_root(agent_resolver, &agent_path).await?;
     let mut cmd = tokio::process::Command::new("pkexec");
     cmd.no_console_window();
     cmd.arg(&agent_path)
@@ -1078,6 +1089,30 @@ async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConne
         stderr: Some(Box::new(stderr)),
         _askpass: None,
     })
+}
+
+/// Copy the agent where root can run it. The AppImage runs from its user's
+/// FUSE mount, which root can't see, so `pkexec` can't start the agent in
+/// place. The copy goes to the user's runtime dir (a private tmpfs, cleared
+/// at logout), named by the agents' hash so one build stages it once.
+#[cfg(all(target_os = "linux", feature = "elevate-agent-copy"))]
+async fn stage_agent_for_root(
+    agent_resolver: &dyn AgentResolver,
+    agent: &std::path::Path,
+) -> Result<std::path::PathBuf, Error> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
+        Error::Custom("an elevated session needs XDG_RUNTIME_DIR to stage the agent".into())
+    })?;
+    let dir = std::path::PathBuf::from(runtime_dir).join("newt");
+    tokio::fs::create_dir_all(&dir).await?;
+    let name = format!("newt-agent-{}", agent_resolver.agent_hash().await?);
+    let staged = dir.join(&name);
+    if !tokio::fs::try_exists(&staged).await? {
+        let partial = dir.join(format!(".{name}.{}", std::process::id()));
+        tokio::fs::copy(agent, &partial).await?;
+        tokio::fs::rename(&partial, &staged).await?;
+    }
+    Ok(staged)
 }
 
 /// Spawn an elevated agent via UAC (`ShellExecuteEx "runas"`) and connect to

@@ -1611,7 +1611,7 @@ No shell or coreutils in the container required, but every connect re-uploads (n
 
 **Connecting**: Via command palette ("Open Elevated", which opens a new window), `--elevated`, or `--target=elevated`. Available on Linux and Windows (macOS has no equivalent with usable IPC). Same session UX as any remote: connection overlay, reconnect (re-prompts), child watcher.
 
-**Linux**: spawns `pkexec <agent-binary-path>`; the Polkit dialog prompts for the password; RPC runs over the agent's stdin/stdout. The agent runs as root.
+**Linux**: spawns `pkexec <agent-binary-path>`; the Polkit dialog prompts for the password; RPC runs over the agent's stdin/stdout. The agent runs as root. The AppImage runs from a FUSE mount that root can't see, so it first copies the agent to `$XDG_RUNTIME_DIR/newt/` (once per build) and elevates that copy, which is the path the Polkit dialog names.
 
 **Windows**: `ShellExecuteEx "runas"` launches the native `newt-agent.exe` elevated (UAC consent prompt). Because `runas` cannot redirect stdio, RPC instead runs over a **named pipe**: the host creates a single-instance server at an unguessable `\\.\pipe\newt-elevated-<uuid>` and passes `--pipe <name>` to the agent, which connects back. The host GUI stays **unelevated** (only the agent is elevated) — drag-and-drop / clipboard from normal apps keep working. While the prompt is up the status reads "Waiting for authorization..."; the host waits 30 seconds for the elevated agent to connect. Declining UAC surfaces a friendly "Elevation request was declined" in the connection overlay. Agent stderr/logs are unavailable in this mode (`runas` carries no console/stdio).
 
