@@ -1,5 +1,5 @@
 use super::attributes::{Attribute, AttributeKind, NamedStream};
-use super::path::{Path, PathBuf};
+use super::path::PathBuf;
 use crate::Error;
 
 pub(super) fn read(
@@ -179,26 +179,6 @@ fn xattrs_read(path: &std::path::Path) -> Result<Option<Attribute>, Error> {
         let _ = path;
         Ok(None)
     }
-}
-
-pub(super) fn stream_path(path: &Path, name: &str) -> Result<PathBuf, Error> {
-    #[cfg(target_os = "macos")]
-    if name == "com.apple.ResourceFork" {
-        return Ok(path.join("..namedfork").join("rsrc"));
-    }
-    #[cfg(windows)]
-    if name.starts_with(':')
-        && name.ends_with(":$DATA")
-        && !name.contains(['/', '\\'])
-        && name != "::$DATA"
-    {
-        return Ok(PathBuf::from_wire_str(&format!(
-            "{}{name}",
-            path.as_wire_str()
-        )));
-    }
-    let _ = (path, name);
-    Err(Error::not_supported())
 }
 
 fn streams(path: &std::path::Path) -> Result<Vec<NamedStream>, Error> {
@@ -507,7 +487,11 @@ mod windows {
                 let name = String::from_utf16_lossy(&data.cStreamName[..end]);
                 if name != "::$DATA" {
                     streams.push(NamedStream {
-                        path: super::stream_path(&PathBuf::from_native(path), &name)?,
+                        path: super::super::path_style::stream_path(
+                            &PathBuf::from_native(path),
+                            &name,
+                            super::super::NamedStreams::host(),
+                        )?,
                         name,
                         size: data.StreamSize as u64,
                     });

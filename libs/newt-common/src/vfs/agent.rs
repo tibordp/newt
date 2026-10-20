@@ -18,7 +18,7 @@ use crate::vfs::path::{Path, PathBuf};
 
 use super::{
     Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, RemoteVfs, Vfs, VfsDescriptor,
-    VfsProgress, encode_mount_meta_labeled, mount_meta_label,
+    VfsProgress, mount_meta_label, relabel_mount_meta,
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +118,10 @@ impl VfsDescriptor for AgentVfsDescriptor {
 
     fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
         super::path_style::metadata_traits_from_meta(mount_meta)
+    }
+
+    fn stream_path(&self, path: &Path, name: &str, mount_meta: &[u8]) -> Result<PathBuf, Error> {
+        super::path_style::stream_path(path, name, super::mount_named_streams(mount_meta))
     }
 }
 
@@ -266,27 +270,18 @@ async fn mount_inner(
 
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
 
-    // Sub-agents are Unix-shaped today: bootstrap and direct-copy only
-    // target linux/darwin triples (`triple_from_os_arch`).
-    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, Some(kind), Some(label));
-
-    let vfs = Arc::new(RemoteVfs::for_agent(
-        communicator.clone(),
-        mount_meta,
-        guard,
-    ));
-
-    // Startup probe. The bootstrap transports handshake before RPC, but the
-    // direct-exec ones don't — without this, an agent that dies on exec
-    // (wrong arch, missing interpreter, …) would still "mount" and produce
-    // a VFS that fails every operation. Racing against connection close
-    // turns that into a mount error carrying the stderr transcript; a beat
-    // for the stderr reader lets the actual diagnostic land in it first.
+    // The sub-agent describes the filesystem it serves (path style, stream
+    // convention); this side only names the mount. Asking is also
+    // the startup probe: the bootstrap transports handshake before RPC,
+    // but the direct-exec ones don't — without it, an agent that dies on
+    // exec (wrong arch, missing interpreter, …) would still "mount" and
+    // produce a VFS that fails every operation. Racing against connection
+    // close turns that into a mount error carrying the stderr transcript; a
+    // beat for the stderr reader lets the actual diagnostic land in it first.
     log.log("Verifying agent connection...".to_string());
-    let probe_path = PathBuf::root();
-    tokio::select! {
-        r = vfs.get_metadata(&probe_path) => {
-            r.map_err(|e| Error::custom(format!("agent startup probe failed: {}", e)))?;
+    let served: Vec<u8> = tokio::select! {
+        r = communicator.invoke(crate::api::API_VFS_MOUNT_META, &()) => {
+            r.map_err(|e| Error::custom(format!("agent startup probe failed: {}", e)))?
         }
         _ = communicator.closed() => {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -294,8 +289,12 @@ async fn mount_inner(
                 "agent exited during startup (see connection log)",
             ));
         }
-    }
+    };
     log.log("Connected".to_string());
 
-    Ok(vfs)
+    Ok(Arc::new(RemoteVfs::for_agent(
+        communicator,
+        relabel_mount_meta(&served, kind, label),
+        guard,
+    )))
 }

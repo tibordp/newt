@@ -3,10 +3,9 @@
 //! media, mapped network drive, subst alias, RAM disk — plus the volume
 //! label and filesystem name where obtainable.
 //!
-//! Two consumers: `local_roots()` stamps a `VolumeInfo` per drive into
-//! `mount_meta` at mount time (surfaced in the VFS selector), and
-//! `fs_stats` probes the volume containing the listed directory (surfaced
-//! in the pane footer). Probing always happens on the side that owns the
+//! Two consumers: `local_roots()` classifies each drive it lists
+//! (`Vfs::roots`, surfaced in the VFS selector), and `fs_stats` probes the
+//! volume containing the listed directory (surfaced in the pane footer). Probing always happens on the side that owns the
 //! filesystem; the result crosses RPC as plain data.
 
 use serde::{Deserialize, Serialize};

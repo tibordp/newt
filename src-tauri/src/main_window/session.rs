@@ -1388,7 +1388,10 @@ pub(super) async fn connect(
     let root_meta = if connection_target.is_remote() {
         PathStyle::Unix.encode()
     } else {
-        PathStyle::host().encode()
+        newt_common::vfs::encode_mount_meta(
+            PathStyle::host(),
+            newt_common::vfs::NamedStreams::host(),
+        )
     };
     let mut initial_mounted = HashMap::new();
     initial_mounted.insert(
@@ -1411,7 +1414,10 @@ pub(super) async fn connect(
         // the request so the agent's `RemoteVfs` answers descriptor queries
         // correctly, and round-trips back in the response for our own
         // bookkeeping.
-        let client_local_meta = PathStyle::host().encode();
+        let client_local_meta = newt_common::vfs::encode_mount_meta(
+            PathStyle::host(),
+            newt_common::vfs::NamedStreams::host(),
+        );
         match services
             .vfs_manager
             .mount(newt_common::vfs::MountRequest::Remote {

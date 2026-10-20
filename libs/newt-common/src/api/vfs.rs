@@ -17,12 +17,11 @@ use std::sync::Arc;
 use super::{
     API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
     API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA, API_VFS_HARD_LINK,
-    API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
+    API_VFS_LIST_FILES, API_VFS_MOUNT_META, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE,
     API_VFS_READ_ATTRIBUTE, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
     API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_ROOTS, API_VFS_SAME_FILE, API_VFS_SET_METADATA,
-    API_VFS_STREAM_PATH, API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
-    API_VFS_WRITE_ATTRIBUTE, decode, encode,
+    API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE, API_VFS_WRITE_ATTRIBUTE, decode, encode,
 };
 use crate::Error;
 use crate::rpc::{Api, Dispatcher, Outbox, StreamId, StreamReceiver, StreamSender};
@@ -230,10 +229,7 @@ impl Dispatcher for VfsDispatcher {
                 });
                 encode(&result.map(|()| entries))
             }
-            API_VFS_STREAM_PATH => {
-                let (path, name): (PathBuf, String) = decode(&req[..]);
-                encode(&self.vfs.stream_path(&path, &name).await)
-            }
+            API_VFS_MOUNT_META => encode(&self.vfs.mount_meta()),
             API_VFS_GET_METADATA => {
                 let path: PathBuf = decode(&req[..]);
                 let ret = self.vfs.get_metadata(&path).await;

@@ -305,7 +305,10 @@ async fn copy_streams(
 ) -> Result<(), crate::Error> {
     use tokio::io::AsyncReadExt;
     for stream in streams {
-        let target = cancellable(cancel, destination.stream_path(path, &stream.name)).await?;
+        let target =
+            destination
+                .descriptor()
+                .stream_path(path, &stream.name, &destination.mount_meta())?;
         let mut reader = cancellable(cancel, source.open_read_async(&stream.path)).await?;
         let mut writer = cancellable(
             cancel,

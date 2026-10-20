@@ -107,7 +107,6 @@ pub const API_VFS_READ_AT: Api = Api(634);
 pub const API_VFS_READ_AT_CLOSE: Api = Api(635);
 pub const API_VFS_READ_ATTRIBUTE: Api = Api(636);
 pub const API_VFS_WRITE_ATTRIBUTE: Api = Api(637);
-pub const API_VFS_STREAM_PATH: Api = Api(638);
 pub const API_VFS_RESOLVE_LINK: Api = Api(639);
 pub const API_VFS_READ_ORDER: Api = Api(640);
 pub const API_VFS_WRITE_RANGE: Api = Api(641);
@@ -115,6 +114,9 @@ pub const API_VFS_LIST_RECURSIVE: Api = Api(642);
 pub const API_VFS_EXCHANGE: Api = Api(644);
 pub const API_VFS_IS_PACKAGE: Api = Api(645);
 pub const API_VFS_ROOTS: Api = Api(646);
+/// The served filesystem's own `mount_meta`: a mount-only agent's report of
+/// what it serves, asked once at mount.
+pub const API_VFS_MOUNT_META: Api = Api(647);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);

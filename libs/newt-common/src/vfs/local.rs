@@ -28,8 +28,8 @@ use super::path_style::{
     unified_root_from_meta,
 };
 use super::{
-    Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
-    VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, MetadataTraits, NamedStreams, PathStyle, RegisteredDescriptor,
+    RootInfo, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
 };
 
 /// Files-per-batch streamed to the host during a directory listing. Smaller
@@ -130,6 +130,10 @@ impl VfsDescriptor for LocalVfsDescriptor {
     }
     fn metadata_traits(&self, mount_meta: &[u8]) -> MetadataTraits {
         metadata_traits_from_meta(mount_meta)
+    }
+
+    fn stream_path(&self, path: &Path, name: &str, mount_meta: &[u8]) -> Result<PathBuf, Error> {
+        super::path_style::stream_path(path, name, super::mount_named_streams(mount_meta))
     }
 }
 
@@ -424,7 +428,7 @@ impl Vfs for LocalVfs {
     /// agent for a remote session. So it stamps this binary's host style
     /// and the roots enumerated here, carried to whichever side renders.
     fn mount_meta(&self) -> Vec<u8> {
-        super::encode_mount_meta(PathStyle::host())
+        super::encode_mount_meta(PathStyle::host(), NamedStreams::host())
     }
 
     async fn roots(&self) -> Result<Vec<RootInfo>, Error> {
@@ -743,10 +747,6 @@ impl Vfs for LocalVfs {
         let property = property.clone();
         tokio::task::spawn_blocking(move || super::local_attributes::write(&path, &property))
             .await?
-    }
-
-    async fn stream_path(&self, path: &Path, name: &str) -> Result<PathBuf, Error> {
-        super::local_attributes::stream_path(path, name)
     }
 
     async fn overwrite_async(

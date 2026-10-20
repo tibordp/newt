@@ -39,8 +39,8 @@ pub use mount::{
     VfsManagerRemote, VfsRegistryManager, sniff_mount_request,
 };
 pub use path_style::{
-    PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
-    unix_breadcrumbs, unix_display_path,
+    NamedStreams, PathStyle, encode_mount_meta, mount_meta_kind, mount_meta_label,
+    mount_named_streams, relabel_mount_meta, unix_breadcrumbs, unix_display_path,
 };
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
@@ -416,6 +416,14 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn metadata_traits(&self, _mount_meta: &[u8]) -> MetadataTraits {
         MetadataTraits::default()
     }
+
+    /// Where the named stream `name` of the file at `path` goes when
+    /// written here. `NotSupported` where the filesystem keeps no such
+    /// streams. Default: none.
+    fn stream_path(&self, path: &Path, name: &str, mount_meta: &[u8]) -> Result<PathBuf, Error> {
+        let _ = (path, name, mount_meta);
+        Err(Error::not_supported())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -787,11 +795,6 @@ pub trait Vfs: Send + Sync {
             }
         }
         Ok(result)
-    }
-
-    async fn stream_path(&self, path: &Path, name: &str) -> Result<path::PathBuf, Error> {
-        let _ = (path, name);
-        Err(Error::not_supported())
     }
 
     /// Each path's position in the order this source reads cheapest, for

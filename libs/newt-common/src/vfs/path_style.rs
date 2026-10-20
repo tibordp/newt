@@ -17,6 +17,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Error;
+
 use super::path::{Path, PathBuf};
 use super::{Breadcrumb, MetadataTraits};
 
@@ -24,6 +26,55 @@ use super::{Breadcrumb, MetadataTraits};
 pub enum PathStyle {
     Unix,
     Windows,
+}
+
+/// How a filesystem names a file's alternate data, if it keeps any: the
+/// path `stream_path` builds for a stream. Like `PathStyle`, a property of
+/// the side that owns the filesystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum NamedStreams {
+    #[default]
+    None,
+    /// macOS: a file's resource fork at `file/..namedfork/rsrc`.
+    ResourceFork,
+    /// NTFS alternate data streams, `file:name:$DATA`.
+    Ntfs,
+}
+
+impl NamedStreams {
+    /// The convention of the OS this process was compiled for. Like
+    /// `PathStyle::host`, only for a filesystem that is this process's own.
+    pub fn host() -> NamedStreams {
+        if cfg!(target_os = "macos") {
+            NamedStreams::ResourceFork
+        } else if cfg!(windows) {
+            NamedStreams::Ntfs
+        } else {
+            NamedStreams::None
+        }
+    }
+}
+
+/// Where the stream `name` of the file at `path` lives, under `streams`.
+/// `NotSupported` for a name the convention has no place for.
+pub fn stream_path(path: &Path, name: &str, streams: NamedStreams) -> Result<PathBuf, Error> {
+    match streams {
+        NamedStreams::ResourceFork if name == "com.apple.ResourceFork" => {
+            Ok(path.join("..namedfork").join("rsrc"))
+        }
+        NamedStreams::Ntfs
+            if name.starts_with(':')
+                && name.ends_with(":$DATA")
+                && !name.contains(['/', '\\'])
+                && name != "::$DATA" =>
+        {
+            Ok(PathBuf::from_wire_str(&format!(
+                "{}{name}",
+                path.as_wire_str()
+            )))
+        }
+        _ => Err(Error::not_supported()),
+    }
 }
 
 /// No version field: the agent is built from the same sources as the
@@ -36,6 +87,7 @@ pub enum PathStyle {
 #[derive(Serialize, Deserialize)]
 struct MountMeta {
     style: PathStyle,
+    streams: NamedStreams,
     /// Human-readable mount target (agent mounts: the container name,
     /// host, or pod). `None` for style-only metas.
     label: Option<String>,
@@ -44,24 +96,32 @@ struct MountMeta {
     kind: Option<String>,
 }
 
-/// Encode `mount_meta` carrying the path style.
-pub fn encode_mount_meta(style: PathStyle) -> Vec<u8> {
-    encode_mount_meta_labeled(style, None, None)
-}
-
-/// `encode_mount_meta`, plus display strings (see `MountMeta::kind` /
-/// `MountMeta::label`).
-pub fn encode_mount_meta_labeled(
-    style: PathStyle,
-    kind: Option<&str>,
-    label: Option<&str>,
-) -> Vec<u8> {
+/// Encode `mount_meta` carrying the path style and the stream convention,
+/// as the owner of the filesystem describes it.
+pub fn encode_mount_meta(style: PathStyle, streams: NamedStreams) -> Vec<u8> {
     bincode::serialize(&MountMeta {
         style,
-        label: label.map(|l| l.to_string()),
-        kind: kind.map(|k| k.to_string()),
+        streams,
+        label: None,
+        kind: None,
     })
-    .unwrap_or_default()
+    .expect("mount_meta encodes")
+}
+
+/// `meta`, as its owner reported it, with the display strings the mounting
+/// side gives it (see `MountMeta::kind` / `MountMeta::label`).
+pub fn relabel_mount_meta(meta: &[u8], kind: &str, label: &str) -> Vec<u8> {
+    let mut meta: MountMeta = bincode::deserialize(meta).expect("mount_meta from the owner");
+    meta.kind = Some(kind.to_string());
+    meta.label = Some(label.to_string());
+    bincode::serialize(&meta).expect("mount_meta encodes")
+}
+
+/// The stream convention from `mount_meta`; `None` for a style-only meta.
+pub fn mount_named_streams(meta: &[u8]) -> NamedStreams {
+    bincode::deserialize::<MountMeta>(meta)
+        .map(|m| m.streams)
+        .unwrap_or_default()
 }
 
 /// The display label from `mount_meta`, if one was recorded.
@@ -108,7 +168,7 @@ impl PathStyle {
 
     /// Encode for `mount_meta`, style only.
     pub fn encode(self) -> Vec<u8> {
-        encode_mount_meta(self)
+        encode_mount_meta(self, NamedStreams::None)
     }
 
     /// Decode from `mount_meta`. Empty / legacy / unparseable ⇒ `Unix`:
@@ -360,6 +420,50 @@ mod tests {
                 .split(PathStyle::Windows.separators())
                 .collect::<Vec<_>>(),
             vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn stream_paths_follow_the_filesystems_convention() {
+        let file = PathBuf::from_wire_str("/dir/file");
+        let fork = "com.apple.ResourceFork";
+        let ads = ":Zone.Identifier:$DATA";
+
+        assert_eq!(
+            stream_path(&file, fork, NamedStreams::ResourceFork).unwrap(),
+            PathBuf::from_wire_str("/dir/file/..namedfork/rsrc")
+        );
+        assert_eq!(
+            stream_path(&file, ads, NamedStreams::Ntfs).unwrap(),
+            PathBuf::from_wire_str("/dir/file:Zone.Identifier:$DATA")
+        );
+        for (name, streams) in [
+            (fork, NamedStreams::Ntfs),
+            (ads, NamedStreams::ResourceFork),
+            (fork, NamedStreams::None),
+            ("::$DATA", NamedStreams::Ntfs),
+            (":a/b:$DATA", NamedStreams::Ntfs),
+        ] {
+            let err = stream_path(&file, name, streams).unwrap_err();
+            assert_eq!(
+                err.kind,
+                crate::ErrorKind::NotSupported,
+                "{name} {streams:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_relabelled_meta_keeps_what_its_owner_said() {
+        let owner = encode_mount_meta(PathStyle::Windows, NamedStreams::Ntfs);
+        let meta = relabel_mount_meta(&owner, "SSH", "box");
+        assert_eq!(PathStyle::from_mount_meta(&meta), PathStyle::Windows);
+        assert_eq!(mount_named_streams(&meta), NamedStreams::Ntfs);
+        assert_eq!(mount_meta_kind(&meta).as_deref(), Some("SSH"));
+        assert_eq!(mount_meta_label(&meta).as_deref(), Some("box"));
+        assert_eq!(
+            mount_named_streams(&PathStyle::Unix.encode()),
+            NamedStreams::None
         );
     }
 

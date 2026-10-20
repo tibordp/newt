@@ -122,6 +122,10 @@ impl VfsDescriptor for RemoteVfsDescriptor {
     fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
         super::path_style::metadata_traits_from_meta(mount_meta)
     }
+
+    fn stream_path(&self, path: &Path, name: &str, mount_meta: &[u8]) -> Result<PathBuf, Error> {
+        super::path_style::stream_path(path, name, super::mount_named_streams(mount_meta))
+    }
 }
 
 pub static REMOTE_VFS_DESCRIPTOR: RemoteVfsDescriptor = RemoteVfsDescriptor;
@@ -379,12 +383,6 @@ impl Vfs for RemoteVfs {
     async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
         self.communicator
             .invoke(crate::api::API_VFS_RESOLVE_LINK, &path.to_owned())
-            .await?
-    }
-
-    async fn stream_path(&self, path: &Path, name: &str) -> Result<PathBuf, Error> {
-        self.communicator
-            .invoke(crate::api::API_VFS_STREAM_PATH, &(path.to_owned(), name))
             .await?
     }
 

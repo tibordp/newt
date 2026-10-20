@@ -7,11 +7,14 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, BufReader};
 
 use newt_common::api::API_LIST_FILES;
+use newt_common::api::API_VFS_MOUNT_META;
 use newt_common::connect::{AgentMode, ConnectLog, SpawnSpec, make_stream};
 use newt_common::rpc::Communicator;
 use newt_common::vfs::agent::AgentConnectionGuard;
 use newt_common::vfs::path::PathBuf as VfsPathBuf;
-use newt_common::vfs::{PathStyle, RemoteVfs, Vfs, encode_mount_meta_labeled};
+use newt_common::vfs::{
+    NamedStreams, PathStyle, RemoteVfs, Vfs, mount_named_streams, relabel_mount_meta,
+};
 
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_newt-agent")
@@ -23,7 +26,7 @@ fn vfs_path_of(native: &std::path::Path) -> VfsPathBuf {
 
 /// Wire a spawned serve-vfs agent's stdio into the proxy `RemoteVfs`,
 /// exactly like `vfs::agent::mount_inner` does.
-fn proxy_for(mut child: tokio::process::Child) -> (Arc<RemoteVfs>, Communicator) {
+async fn proxy_for(mut child: tokio::process::Child) -> (Arc<RemoteVfs>, Communicator) {
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stream = make_stream(BufReader::new(stdout), stdin);
@@ -31,13 +34,29 @@ fn proxy_for(mut child: tokio::process::Child) -> (Arc<RemoteVfs>, Communicator)
     let communicator = Communicator::new(stream);
 
     let guard = AgentConnectionGuard::new(child, None);
-    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, Some("Docker"), Some("test"));
+    let mount_meta = served_mount_meta(&communicator, "Docker", "test")
+        .await
+        .unwrap();
     let vfs = Arc::new(RemoteVfs::for_agent(
         communicator.clone(),
         mount_meta,
         guard,
     ));
     (vfs, communicator)
+}
+
+/// The agent's own description of what it serves, named by the mounting
+/// side, as an agent mount takes it.
+async fn served_mount_meta(
+    communicator: &Communicator,
+    kind: &str,
+    label: &str,
+) -> Result<Vec<u8>, newt_common::Error> {
+    let served: Vec<u8> = communicator
+        .invoke(API_VFS_MOUNT_META, &())
+        .await
+        .map_err(|e| newt_common::Error::custom(e.to_string()))?;
+    Ok(relabel_mount_meta(&served, kind, label))
 }
 
 #[tokio::test]
@@ -55,7 +74,7 @@ async fn serve_vfs_lists_and_reads_files() {
         .spawn()
         .unwrap();
 
-    let (vfs, _communicator) = proxy_for(child);
+    let (vfs, _communicator) = proxy_for(child).await;
 
     // Descriptor identity: an agent mount must not masquerade as "remote".
     assert_eq!(vfs.descriptor().type_name(), "agent");
@@ -72,6 +91,12 @@ async fn serve_vfs_lists_and_reads_files() {
         vfs.roots().await.unwrap(),
         [newt_common::vfs::RootInfo::root()]
     );
+    // What it serves is described by the agent, not assumed by the mount.
+    assert_eq!(
+        PathStyle::from_mount_meta(&vfs.mount_meta()),
+        PathStyle::host()
+    );
+    assert_eq!(mount_named_streams(&vfs.mount_meta()), NamedStreams::host());
 
     // list_files through the proxy hits the sub-agent's LocalVfs.
     let listing = vfs
@@ -103,7 +128,7 @@ async fn serve_vfs_does_not_expose_session_api() {
         .spawn()
         .unwrap();
 
-    let (vfs, communicator) = proxy_for(child);
+    let (vfs, communicator) = proxy_for(child).await;
 
     // Prove the connection is live first, so the assertion below can't
     // pass vacuously on a dead agent.
@@ -192,11 +217,10 @@ async fn bootstrap_spawns_serve_vfs_agent() {
 
     let communicator = Communicator::new(spawned.stream);
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
-    let vfs = RemoteVfs::for_agent(
-        communicator,
-        encode_mount_meta_labeled(PathStyle::Unix, Some("Custom"), Some("bootstrap-test")),
-        guard,
-    );
+    let mount_meta = served_mount_meta(&communicator, "Custom", "bootstrap-test")
+        .await
+        .unwrap();
+    let vfs = RemoteVfs::for_agent(communicator, mount_meta, guard);
 
     let listing = vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
     assert!(!listing.files.is_empty());
@@ -228,11 +252,8 @@ async fn bootstrap_and_list(
     .await?;
     let communicator = Communicator::new(spawned.stream);
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
-    let vfs = RemoteVfs::for_agent(
-        communicator,
-        encode_mount_meta_labeled(PathStyle::Unix, Some("Custom"), Some("bootstrap-test")),
-        guard,
-    );
+    let mount_meta = served_mount_meta(&communicator, "Custom", "bootstrap-test").await?;
+    let vfs = RemoteVfs::for_agent(communicator, mount_meta, guard);
     vfs.list_files(&VfsPathBuf::root(), None).await.map(|_| ())
 }
 
