@@ -1194,7 +1194,9 @@ function PaneInner(
     path: string;
     key: string | null;
     index: number;
-  }>({ path: "", key: null, index: -1 });
+    reveals: number;
+  }>({ path: "", key: null, index: -1, reveals: 0 });
+  const cursorReveals = props.cursor_reveals;
   // A scroll to the cursor that lands outside the rows Rust has sent waits
   // for them, keeping the old rows on screen meanwhile: the cursor can be
   // put far from the window, e.g. by a focus restored after a refresh.
@@ -1213,6 +1215,7 @@ function PaneInner(
       path: pathKey,
       key: focused,
       index: focusedIndex,
+      reveals: cursorReveals,
     };
     // A scroll still waiting for its rows is where the view is headed.
     const pending = pendingCursorScrollRef.current;
@@ -1221,8 +1224,12 @@ function PaneInner(
 
     const containerHeight = container.clientHeight;
     const scrollTop = pending ?? container.scrollTop;
+    // Rust put the cursor somewhere on purpose and moved the window to it,
+    // whether or not it moved and whether or not this pane is active.
+    const revealed = cursorReveals !== prev.reveals;
     let target: number;
     if (
+      !revealed &&
       pathKey === prev.path &&
       focused === prev.key &&
       prev.index >= 0 &&
@@ -1233,7 +1240,7 @@ function PaneInner(
       // in it (`scroll_shift`); one out of view is no reason to move it.
       target = scrollTop;
     } else {
-      if (!active) return;
+      if (!active && !revealed) return;
       const itemTop = focusedIndex * rowHeight;
       const itemBottom = itemTop + rowHeight;
       if (itemTop < scrollTop) {
@@ -1260,9 +1267,9 @@ function PaneInner(
     ];
     safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
     // Intentionally excluding file_window — this should only fire when the
-    // focused item changes position, not when the window slides on scroll.
+    // cursor moves or is revealed, not when the window slides on scroll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, path, focused, focusedIndex, rowHeight]);
+  }, [active, path, focused, focusedIndex, cursorReveals, rowHeight]);
   useLayoutEffect(() => {
     const container = containerRef.current;
     const target = pendingCursorScrollRef.current;
@@ -1747,10 +1754,33 @@ function PaneInner(
     guarded(() => commands.relativeJump(paneHandle, delta, !!withSelection));
   };
 
+  // The platform's other jump to the first or last entry besides Home/End:
+  // ⌘↑/⌘↓ on macOS, Ctrl+Home/End elsewhere. A user binding on the chord
+  // wins.
+  const edgeJump = (e: React.KeyboardEvent<Element>): number | null => {
+    const [modifier, other, first, last] = IS_MAC_HOST
+      ? [e.metaKey, e.ctrlKey, "ArrowUp", "ArrowDown"]
+      : [e.ctrlKey, e.metaKey, "Home", "End"];
+    if (!modifier || other || e.altKey) return null;
+    const delta =
+      e.key === first
+        ? -Math.pow(2, 31)
+        : e.key === last
+          ? Math.pow(2, 31) - 1
+          : null;
+    if (delta === null || boundKeys.has(normalizeKeyEvent(e.nativeEvent))) {
+      return null;
+    }
+    return delta;
+  };
+
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
     const { noModifiers } = modifiers(e);
+    const edge = edgeJump(e);
 
-    if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
+    if (edge !== null) {
+      relativeJump(edge, e.shiftKey);
+    } else if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
     } else if (e.key == "ArrowUp" && (noModifiers || e.shiftKey)) {
       relativeJump(-1, e.shiftKey);

@@ -176,6 +176,7 @@ export function pane(spec: PaneSpec): PaneViewState {
     focused_index:
       focused === null ? null : items.findIndex((f) => f.name === focused),
     scroll_shift: 0,
+    cursor_reveals: 0,
     display_path: vfs.display(spec.path),
     vfs_display_name: vfs.name,
     vfs_type_name: vfs.typeName,

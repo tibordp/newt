@@ -4061,7 +4061,15 @@ selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: Fs
  * re-sort). Cumulative: the frontend scrolls by each change, in the
  * same render as the window that follows the move.
  */
-scroll_shift: number; display_path: string; vfs_display_name: string; 
+scroll_shift: number; 
+/**
+ * Times the cursor was put somewhere on purpose (a cursor key, a
+ * click, focusing an entry by name). Cumulative: the frontend scrolls
+ * the cursor into view on each change, also when it stayed on its row
+ * (Home on the first row with the view scrolled away), since the
+ * window has followed the cursor regardless.
+ */
+cursor_reveals: number; display_path: string; vfs_display_name: string; 
 /**
  * The VFS's `type_name`, for its icon.
  */

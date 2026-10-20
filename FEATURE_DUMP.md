@@ -276,6 +276,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Home | Jump to first item |
 | End | Jump to last item |
 | Shift+Home / Shift+End | Jump to first/last item, selecting the whole range |
+| ⌘↑ / ⌘↓ (macOS), Ctrl+Home / Ctrl+End (elsewhere) | Same as Home / End, Shift included — the platform's start/end-of-document chord, as in text editors (Finder's ⌘↓ Open and ⌘↑ Enclosing Folder are Enter and Backspace here). A key binding on the chord takes precedence |
 | Enter | Open file or enter directory (see "Enter behavior" below) — the focused entry, never the selection |
 | Backspace | Navigate to parent directory (`..`); while a quick search or filter is active it edits the typed text instead |
 | Tab | Switch active pane |

@@ -1,5 +1,4 @@
 use super::attributes::{Attribute, AttributeKind, NamedStream};
-use super::path::PathBuf;
 use crate::Error;
 
 pub(super) fn read(
@@ -191,7 +190,7 @@ fn streams(path: &std::path::Path) -> Result<Vec<NamedStream>, Error> {
         match std::fs::metadata(&fork) {
             Ok(meta) if meta.len() > 0 => Ok(vec![NamedStream {
                 name: "com.apple.ResourceFork".into(),
-                path: PathBuf::from_native(&fork),
+                path: super::path::PathBuf::from_native(&fork),
                 size: meta.len(),
             }]),
             Ok(_) => Ok(Vec::new()),
@@ -488,7 +487,7 @@ mod windows {
                 if name != "::$DATA" {
                     streams.push(NamedStream {
                         path: super::super::path_style::stream_path(
-                            &PathBuf::from_native(path),
+                            &super::path::PathBuf::from_native(path),
                             &name,
                             super::super::NamedStreams::host(),
                         )?,

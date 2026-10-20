@@ -1797,6 +1797,12 @@ pub struct PaneViewState {
     /// re-sort). Cumulative: the frontend scrolls by each change, in the
     /// same render as the window that follows the move.
     pub scroll_shift: i32,
+    /// Times the cursor was put somewhere on purpose (a cursor key, a
+    /// click, focusing an entry by name). Cumulative: the frontend scrolls
+    /// the cursor into view on each change, also when it stayed on its row
+    /// (Home on the first row with the view scrolled away), since the
+    /// window has followed the cursor regardless.
+    pub cursor_reveals: u32,
     pub display_path: String,
     pub vfs_display_name: String,
     /// The VFS's `type_name`, for its icon.
@@ -1963,6 +1969,7 @@ impl PaneViewState {
                 self.viewport_hint = (fi.saturating_sub(vc / 2), vc);
             }
         }
+        self.cursor_reveals = self.cursor_reveals.wrapping_add(1);
         self.recompute_window();
     }
 
@@ -3243,6 +3250,21 @@ mod tests {
         vs.set_sorting(descending, false);
         assert_eq!(vs.viewport_hint.0, 3);
         assert_eq!(vs.scroll_shift, 0);
+    }
+
+    #[test]
+    fn a_cursor_key_that_leaves_the_cursor_in_place_still_reveals_it() {
+        let names: Vec<String> = (0..100).map(|i| format!("f{i:02}")).collect();
+        let names: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), false)).collect();
+        let mut vs = listed(&names);
+        vs.focused = Some("f00".into());
+        vs.focused_index = Some(0);
+        vs.viewport_hint = (80, 20);
+        vs.relative_jump(i32::MIN, false);
+        assert_eq!(vs.focused_index, Some(0));
+        assert_eq!(vs.viewport_hint.0, 0);
+        assert_eq!(vs.file_window.offset, 0);
+        assert_eq!(vs.cursor_reveals, 1);
     }
 
     #[test]
