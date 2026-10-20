@@ -16,7 +16,7 @@ const scene: Scene = {
       pane({
         path: "/Users/demo/src/newt",
         focused: "src-tauri",
-        gitBranch: "master",
+        gitBranch: "main",
         fsStats: fsStats(gb(994.66), gb(297.71)),
         entries: [
           dir("docs", { modified: at("2026-07-17T00:58:44") }),

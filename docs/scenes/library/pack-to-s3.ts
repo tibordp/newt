@@ -27,7 +27,7 @@ const scene: Scene = {
       pane({
         path: project,
         focused: "agents",
-        gitBranch: "master",
+        gitBranch: "main",
         fsStats: fsStats(gb(994.66), gb(297.71)),
         git: {
           agents: "ignored",

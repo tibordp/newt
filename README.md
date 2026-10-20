@@ -75,7 +75,7 @@ zig 0.15). Other tasks: `cargo xtask gen-bindings` regenerates `src/lib/bindings
 changing a Tauri command or a type it carries, `cargo xtask notices` regenerates the third-party
 notices, and `npm run screenshots` re-renders the documentation screenshots.
 
-CI runs on every push to master:
+CI runs on every push to main:
 
 ```sh
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings

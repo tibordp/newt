@@ -3,7 +3,7 @@ import { docsColumns } from "../demo";
 import type { Scene } from "../types";
 
 const E = "\x1b[";
-const prompt = `${E}1;32mdemo@studio${E}0m ${E}1;34m~/src/newt${E}0m ${E}33m(master)${E}0m $ `;
+const prompt = `${E}1;32mdemo@studio${E}0m ${E}1;34m~/src/newt${E}0m ${E}33m(main)${E}0m $ `;
 
 const scene: Scene = {
   description: "Both panes above the integrated terminal, focus in the shell",
@@ -17,7 +17,7 @@ const scene: Scene = {
       pane({
         path: "/Users/demo/src/newt",
         focused: "src",
-        gitBranch: "master",
+        gitBranch: "main",
         fsStats: fsStats(gb(994.66), gb(297.71)),
         entries: [
           dir("docs", { modified: at("2026-07-17T00:58:44") }),
