@@ -487,7 +487,7 @@ mod windows {
                 if name != "::$DATA" {
                     streams.push(NamedStream {
                         path: super::super::path_style::stream_path(
-                            &super::path::PathBuf::from_native(path),
+                            &super::super::path::PathBuf::from_native(path),
                             &name,
                             super::super::NamedStreams::host(),
                         )?,

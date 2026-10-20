@@ -455,7 +455,9 @@ jobs:
           DMG=$(ls target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
           codesign --verify --strict --verbose=2 "$DMG"
           MNT=$(mktemp -d)
-          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG"
+          # The DMG carries the GPL as a license agreement, which attach
+          # pages through and waits for "Y" to.
+          yes | hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG" >/dev/null
           trap 'hdiutil detach "$MNT"' EXIT
           APP=$(ls -d "$MNT"/*.app)
           codesign --verify --deep --strict --verbose=2 "$APP"
