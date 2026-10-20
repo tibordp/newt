@@ -21,6 +21,7 @@ import {
 } from "../lib/bindings";
 import { useFormatBytes } from "../lib/size";
 import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
+import { useWheelScroll } from "../lib/useWheelScroll";
 import { GoToBar } from "./GoToDialog";
 import { SearchBar, type SearchMatch } from "./SearchBar";
 import { ModeToggle } from "./ModeToggle";
@@ -812,14 +813,18 @@ export function TableViewer({
 
   // --- Scrolling ---
 
-  const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const el = e.currentTarget;
+  const syncScroll = useCallback(
+    (el: HTMLElement) => {
       setTopRow(Math.floor((el.scrollTop * scale) / ROW_HEIGHT));
       setScrollLeft(el.scrollLeft);
     },
     [scale],
   );
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => syncScroll(e.currentTarget),
+    [syncScroll],
+  );
+  useWheelScroll(scrollRef, { sync: syncScroll });
 
   useLayoutEffect(() => {
     const el = scrollRef.current;

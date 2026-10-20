@@ -48,6 +48,7 @@ import { ValueInline, ValueRows, copyableValue } from "./DissectValue";
 import { useEmbeddedCopy, useViewerHost } from "./host";
 import { IconChevronRight } from "./icons";
 import { useAfterGrace } from "../lib/useAfterGrace";
+import { useWheelScroll } from "../lib/useWheelScroll";
 import { ModeToggle } from "./ModeToggle";
 import styles from "./DissectViewer.module.scss";
 import viewerStyles from "./Viewer.module.scss";
@@ -628,6 +629,17 @@ export function DissectViewer({
   const hexVisible = Math.max(1, Math.floor(hexHeight / HEX_ROW));
   const hexFirst = Math.max(0, hexTop - OVERSCAN);
   const hexLast = Math.min(hexRows, hexTop + hexVisible + OVERSCAN);
+  const syncHex = useCallback(
+    (el: HTMLElement) =>
+      setHexTop(
+        Math.min(
+          Math.max(0, hexRows - hexVisible),
+          Math.floor((el.scrollTop * hexScale) / HEX_ROW),
+        ),
+      ),
+    [hexRows, hexVisible, hexScale],
+  );
+  useWheelScroll(hexRef, { sync: syncHex });
 
   const scrollHexTo = useCallback(
     (row: number, center: boolean) => {
@@ -728,6 +740,11 @@ export function DissectViewer({
 
   const treeRef = useRef<HTMLDivElement>(null);
   const [treeTop, setTreeTop] = useState(0);
+  const syncTree = useCallback(
+    (el: HTMLElement) => setTreeTop(el.scrollTop),
+    [],
+  );
+  useWheelScroll(treeRef, { sync: syncTree });
   const [treeHeight, setTreeHeight] = useState(0);
   useLayoutEffect(() => {
     const el = treeRef.current;
@@ -1584,7 +1601,7 @@ export function DissectViewer({
                 aria-label={`Structure of ${filePath}`}
                 onKeyDown={onTreeKey}
                 onFocus={() => setZone("tree")}
-                onScroll={(e) => setTreeTop(e.currentTarget.scrollTop)}
+                onScroll={(e) => syncTree(e.currentTarget)}
               >
                 <div
                   style={{
@@ -1796,16 +1813,7 @@ export function DissectViewer({
                       ) ?? hexRef.current?.querySelector("[data-offset]"),
                   ).onContextMenuCapture
                 }
-                onScroll={(e) =>
-                  setHexTop(
-                    Math.min(
-                      Math.max(0, hexRows - hexVisible),
-                      Math.floor(
-                        (e.currentTarget.scrollTop * hexScale) / HEX_ROW,
-                      ),
-                    ),
-                  )
-                }
+                onScroll={(e) => syncHex(e.currentTarget)}
               >
                 <div
                   className={styles.hexContent}
