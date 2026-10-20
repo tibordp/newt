@@ -3354,13 +3354,17 @@ export type IssueAction = "skip" | "overwrite" |
 /**
  * Overwrite when the source was modified later than the destination.
  */
-"overwrite_if_newer" | "overwrite_if_size_differs" | "overwrite_if_size_or_date_differs" | "retry"
+"overwrite_if_newer" | "overwrite_if_size_differs" | "overwrite_if_size_or_date_differs" | "retry" | "delete_permanently"
 export type IssueKind = "AlreadyExists" | 
 /**
  * A folder landing on an existing folder: Merge, Replace or Skip. Its
  * own kind, so "apply to all" here never answers a file conflict.
  */
-"FolderExists" | "PermissionDenied" | "IoError" | { PreservationFailed: AttributeKind } | { Other: string }
+"FolderExists" | "PermissionDenied" | "IoError" | { PreservationFailed: AttributeKind } | 
+/**
+ * No trash takes the item: Skip or Delete Permanently.
+ */
+"NotTrashable" | { Other: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
 /**

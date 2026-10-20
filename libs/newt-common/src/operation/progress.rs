@@ -251,7 +251,9 @@ pub(super) fn replaces(action: IssueAction, source: &File, existing: &File) -> b
         IssueAction::OverwriteIfSizeOrDateDiffers => {
             !same(source.size, existing.size) || !same(source.modified, existing.modified)
         }
-        IssueAction::Merge | IssueAction::Retry => unreachable!("not offered"),
+        IssueAction::Merge | IssueAction::Retry | IssueAction::DeletePermanently => {
+            unreachable!("not offered")
+        }
     }
 }
 

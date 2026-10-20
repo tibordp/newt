@@ -876,24 +876,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn trash_item(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_native();
-        tokio::task::spawn_blocking(move || {
-            #[allow(unused_mut)]
-            let mut trash = trash::TrashContext::default();
-            // NSFileManager's trashItemAtURL rather than trash-rs's default of
-            // scripting Finder through osascript: no Apple Events permission,
-            // no process per item, and it works headless (an agent over SSH).
-            // Finder's Put Back doesn't offer to restore such items.
-            #[cfg(target_os = "macos")]
-            {
-                use trash::macos::{DeleteMethod, TrashContextExtMacos};
-                trash.set_delete_method(DeleteMethod::NsFileManager);
-            }
-            trash
-                .delete(&path)
-                .map_err(|e| Error::custom(format!("trash: {e}")))
-        })
-        .await?
+        super::trash::trash(&path.to_native()).await
     }
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
@@ -1289,7 +1272,7 @@ fn clonefile(from: &StdPath, to: &StdPath) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+pub(super) fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
     use std::os::unix::ffi::OsStrExt;
     let from = std::ffi::CString::new(from.as_os_str().as_bytes())
         .map_err(|_| Error::custom("path contains a NUL byte"))?;
@@ -1317,7 +1300,7 @@ fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
 }
 
 #[cfg(target_os = "macos")]
-fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+pub(super) fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
     use std::os::unix::ffi::OsStrExt;
     let from = std::ffi::CString::new(from.as_os_str().as_bytes())
         .map_err(|_| Error::custom("path contains a NUL byte"))?;
@@ -1331,7 +1314,7 @@ fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
 }
 
 #[cfg(windows)]
-fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+pub(super) fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     let wide = |p: &StdPath| {
@@ -1352,7 +1335,7 @@ fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
+pub(super) fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
     Err(Error::not_supported())
 }
 

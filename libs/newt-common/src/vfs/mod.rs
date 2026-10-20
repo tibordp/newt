@@ -22,6 +22,7 @@ pub mod remote;
 pub mod s3;
 pub mod search;
 pub mod sftp;
+mod trash;
 pub mod volume;
 pub mod walk;
 

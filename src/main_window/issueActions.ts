@@ -8,6 +8,7 @@ export const ACTION_LABELS: Record<IssueAction, string> = {
   overwrite_if_size_differs: "Overwrite if size differs",
   overwrite_if_size_or_date_differs: "Overwrite if size or date differs",
   retry: "Retry",
+  delete_permanently: "Delete Permanently",
 };
 
 /// Conditional overwrites, offered from a menu on the Overwrite button.

@@ -106,7 +106,6 @@ Release engineering:
 
 Correctness and UX:
 
-- Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - Properties: owner and group take numeric IDs only (no account names); Windows has no attribute editor.
 - Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.

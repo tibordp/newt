@@ -685,6 +685,11 @@ async fn test_trash_not_supported_surfaces_issue() {
         },
         |issue| {
             issue_count.set(issue_count.get() + 1);
+            assert_eq!(issue.kind, IssueKind::NotTrashable);
+            assert_eq!(
+                issue.actions,
+                vec![IssueAction::Skip, IssueAction::DeletePermanently]
+            );
             skip_all(issue)
         },
     )
@@ -694,6 +699,46 @@ async fn test_trash_not_supported_surfaces_issue() {
     assert_eq!(issue_count.get(), 1);
     // Nothing deleted, nothing trashed.
     assert!(result.vfs.exists("/a.txt"));
+    assert!(result.vfs.trashed_paths().is_empty());
+}
+
+#[tokio::test]
+async fn test_untrashable_item_deleted_permanently_on_request() {
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_trash: false,
+            ..Default::default()
+        })
+        .dir("/mydir")
+        .file("/mydir/a.txt", b"a")
+        .dir("/mydir/sub")
+        .file("/mydir/sub/c.txt", b"c")
+        .file("/b.txt", b"b")
+        .build();
+
+    let issue_count = std::cell::Cell::new(0u32);
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/mydir"), vfs_path("/b.txt")],
+            to_trash: true,
+            cross_mount_points: false,
+        },
+        |_| {
+            issue_count.set(issue_count.get() + 1);
+            IssueResponse {
+                action: IssueAction::DeletePermanently,
+                apply_to_all: true,
+            }
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    // "Apply to all" answers the second item too.
+    assert_eq!(issue_count.get(), 1);
+    assert!(!result.vfs.exists("/mydir"));
+    assert!(!result.vfs.exists("/b.txt"));
     assert!(result.vfs.trashed_paths().is_empty());
 }
 

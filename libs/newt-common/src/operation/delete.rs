@@ -150,30 +150,9 @@ pub(super) async fn execute_delete(
         }
 
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
-        let descriptor = vfs.descriptor();
-
-        if descriptor.can_remove_tree() {
-            // Fast path: single atomic removal, counts as 1 item.
-            all_entries.push(ResolvedDeleteEntry {
-                vfs,
-                path: local_path,
-                is_dir: true,
-                use_remove_tree: true,
-            });
-        } else {
-            let entries =
-                collect_delete_entries(&*vfs, &local_path, cross_mount_points, reporter, &cancel)
-                    .await?;
-            for entry in entries {
-                all_entries.push(ResolvedDeleteEntry {
-                    vfs: vfs.clone(),
-                    path: entry.path,
-                    is_dir: entry.is_dir,
-                    use_remove_tree: false,
-                });
-            }
-        }
-
+        all_entries.extend(
+            resolve_delete_entries(vfs, local_path, cross_mount_points, reporter, &cancel).await?,
+        );
         reporter.maybe_send_scanning(all_entries.len() as u64, 0);
     }
 
@@ -187,41 +166,8 @@ pub(super) async fn execute_delete(
         if cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
-
-        let display = shown(&*entry.vfs, &entry.path);
-        reporter.maybe_send_progress(0, items_done, &display);
-
-        let mut retry = true;
-        while retry {
-            retry = false;
-
-            let result = if entry.use_remove_tree {
-                entry.vfs.remove_tree(&entry.path).await
-            } else if entry.is_dir {
-                entry.vfs.remove_dir(&entry.path).await
-            } else {
-                entry.vfs.remove_file(&entry.path).await
-            };
-
-            if let Err(e) = result {
-                match reporter
-                    .handle_io_error(
-                        e,
-                        &format!("Error deleting {}", shown(&*entry.vfs, &entry.path)),
-                        None,
-                        &cancel,
-                        true,
-                    )
-                    .await?
-                {
-                    IssueOutcome::Skip => {}
-                    IssueOutcome::Retry => {
-                        retry = true;
-                    }
-                }
-            }
-        }
-
+        reporter.maybe_send_progress(0, items_done, &shown(&*entry.vfs, &entry.path));
+        delete_entry(reporter, entry, &cancel).await?;
         items_done += 1;
     }
 
@@ -229,10 +175,74 @@ pub(super) async fn execute_delete(
     Ok(())
 }
 
+/// Everything to delete for `root`, in deletion order: the one atomic
+/// removal where the filesystem has it, else every entry under it.
+async fn resolve_delete_entries(
+    vfs: Arc<dyn Vfs>,
+    root: PathBuf,
+    cross_mount_points: bool,
+    reporter: &mut ProgressReporter,
+    cancel: &CancellationToken,
+) -> Result<Vec<ResolvedDeleteEntry>, crate::Error> {
+    if vfs.descriptor().can_remove_tree() {
+        return Ok(vec![ResolvedDeleteEntry {
+            vfs,
+            path: root,
+            is_dir: true,
+            use_remove_tree: true,
+        }]);
+    }
+    let entries =
+        collect_delete_entries(&*vfs, &root, cross_mount_points, reporter, cancel).await?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| ResolvedDeleteEntry {
+            vfs: vfs.clone(),
+            path: entry.path,
+            is_dir: entry.is_dir,
+            use_remove_tree: false,
+        })
+        .collect())
+}
+
+/// Delete one entry, asking what to do when that fails.
+async fn delete_entry(
+    reporter: &mut ProgressReporter,
+    entry: &ResolvedDeleteEntry,
+    cancel: &CancellationToken,
+) -> Result<(), crate::Error> {
+    loop {
+        let result = if entry.use_remove_tree {
+            entry.vfs.remove_tree(&entry.path).await
+        } else if entry.is_dir {
+            entry.vfs.remove_dir(&entry.path).await
+        } else {
+            entry.vfs.remove_file(&entry.path).await
+        };
+        let Err(e) = result else {
+            return Ok(());
+        };
+        match reporter
+            .handle_io_error(
+                e,
+                &format!("Error deleting {}", shown(&*entry.vfs, &entry.path)),
+                None,
+                cancel,
+                true,
+            )
+            .await?
+        {
+            IssueOutcome::Skip => return Ok(()),
+            IssueOutcome::Retry => {}
+        }
+    }
+}
+
 pub(super) async fn execute_trash(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
     paths: Vec<VfsPath>,
+    cross_mount_points: bool,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     debug!("execute_trash: {} paths", paths.len());
@@ -259,32 +269,62 @@ pub(super) async fn execute_trash(
         let display = shown(&*vfs, &local_path);
         reporter.maybe_send_progress(0, items_done, &display);
 
-        let mut retry = true;
-        while retry {
-            retry = false;
-
+        loop {
             let result = if vfs.descriptor().can_trash() {
                 vfs.trash_item(&local_path).await
             } else {
                 Err(crate::Error::not_supported())
             };
+            let Err(e) = result else {
+                break;
+            };
 
-            if let Err(e) = result {
-                match reporter
-                    .handle_io_error(
-                        e,
-                        &format!("Error moving {} to Trash", shown(&*vfs, &local_path)),
+            // What no trash takes is never deleted unasked.
+            if e.kind == crate::ErrorKind::NotSupported {
+                let action = reporter
+                    .raise_issue(
+                        IssueKind::NotTrashable,
+                        format!("{display} can't be moved to the Trash: {e}"),
                         None,
-                        &cancel,
-                        true,
+                        vec![IssueAction::Skip, IssueAction::DeletePermanently],
                     )
-                    .await?
-                {
-                    IssueOutcome::Skip => {}
-                    IssueOutcome::Retry => {
-                        retry = true;
+                    .await?;
+                if action == IssueAction::DeletePermanently {
+                    let entries = resolve_delete_entries(
+                        vfs.clone(),
+                        local_path.clone(),
+                        cross_mount_points,
+                        reporter,
+                        &cancel,
+                    )
+                    .await?;
+                    for entry in &entries {
+                        if cancel.is_cancelled() {
+                            return Err(crate::Error::cancelled());
+                        }
+                        reporter.maybe_send_progress(
+                            0,
+                            items_done,
+                            &shown(&*entry.vfs, &entry.path),
+                        );
+                        delete_entry(reporter, entry, &cancel).await?;
                     }
                 }
+                break;
+            }
+
+            match reporter
+                .handle_io_error(
+                    e,
+                    &format!("Error moving {display} to Trash"),
+                    None,
+                    &cancel,
+                    true,
+                )
+                .await?
+            {
+                IssueOutcome::Skip => break,
+                IssueOutcome::Retry => {}
             }
         }
 

@@ -59,6 +59,8 @@ pub enum IssueKind {
     PermissionDenied,
     IoError,
     PreservationFailed(AttributeKind),
+    /// No trash takes the item: Skip or Delete Permanently.
+    NotTrashable,
     Other(String),
 }
 
@@ -74,6 +76,7 @@ pub enum IssueAction {
     OverwriteIfSizeDiffers,
     OverwriteIfSizeOrDateDiffers,
     Retry,
+    DeletePermanently,
 }
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
@@ -608,7 +611,14 @@ pub async fn execute_operation(
             cross_mount_points,
         } => {
             if to_trash {
-                execute_trash(&mut reporter, &context, paths, cancel.clone()).await
+                execute_trash(
+                    &mut reporter,
+                    &context,
+                    paths,
+                    cross_mount_points,
+                    cancel.clone(),
+                )
+                .await
             } else {
                 execute_delete(
                     &mut reporter,
