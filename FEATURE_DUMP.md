@@ -565,7 +565,7 @@ Deletes all selected files and directories (recursive for directories).
 - If the trash preference is on but the selection isn't trashable (e.g. on S3), a dialog explains the items will be deleted permanently and offers **Delete Permanently** / Cancel — this dialog is shown even when `confirm_delete` is off, since the recoverability expectation would otherwise be silently violated.
 - If nothing is selected, the focused file is the target (unless it's `..`).
 
-**Trash execution**: each top-level item is trashed wholesale (`Vfs::trash_item`) and counts as one progress item — no scan walk. Failures raise the standard Skip/Retry prompt. The operations panel shows the kind as `trash` ("Moving N item(s) to Trash").
+**Trash execution**: each top-level item is trashed wholesale (`Vfs::trash_item`) and counts as one progress item — no scan walk. Failures raise the standard Skip/Retry prompt. The operations panel shows the kind as `trash` ("Moving N item(s) to Trash"). On macOS items go to the Trash through `NSFileManager` (`trashItemAtURL`), not by scripting Finder: no "Newt wants to control Finder" permission, and it works in a session over SSH too. Finder's **Put Back** doesn't offer to restore them on some macOS versions (an Apple bug); dragging an item out of the Trash restores it.
 
 **Permanent delete**: a depth-first walk deletes files first, then directories bottom-up. (`Vfs::remove_tree`, deleting a whole tree in one call, would be used where a VFS offers it; none does today.)
 

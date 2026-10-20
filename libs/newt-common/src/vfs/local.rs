@@ -878,7 +878,20 @@ impl Vfs for LocalVfs {
     async fn trash_item(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
-            trash::delete(&path).map_err(|e| Error::custom(format!("trash: {e}")))
+            #[allow(unused_mut)]
+            let mut trash = trash::TrashContext::default();
+            // NSFileManager's trashItemAtURL rather than trash-rs's default of
+            // scripting Finder through osascript: no Apple Events permission,
+            // no process per item, and it works headless (an agent over SSH).
+            // Finder's Put Back doesn't offer to restore such items.
+            #[cfg(target_os = "macos")]
+            {
+                use trash::macos::{DeleteMethod, TrashContextExtMacos};
+                trash.set_delete_method(DeleteMethod::NsFileManager);
+            }
+            trash
+                .delete(&path)
+                .map_err(|e| Error::custom(format!("trash: {e}")))
         })
         .await?
     }
