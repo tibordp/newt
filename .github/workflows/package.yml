@@ -32,8 +32,36 @@ jobs:
       linux: ${{ steps.plan.outputs.linux }}
       macos: ${{ steps.plan.outputs.macos }}
       windows: ${{ steps.plan.outputs.windows }}
+      signed: ${{ steps.signing.outputs.signed }}
     steps:
       - uses: actions/checkout@v6
+      # macOS signing and notarization are all or nothing: with only part of
+      # the secrets Tauri signs but skips notarization with a mere warning,
+      # and Gatekeeper then blocks the app. Upstream requires all of them; a
+      # fork without any builds unsigned.
+      - id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          names="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8"
+          missing=""
+          for name in $names; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -z "$missing" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$missing" = " $names" ] && [ "$GITHUB_REPOSITORY" != "tibordp/newt" ]; then
+            echo "::warning::No Apple signing secrets — building unsigned macOS artifacts."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Missing Apple signing secrets:$missing"
+            exit 1
+          fi
       - id: plan
         env:
           SET: ${{ inputs.set }}
@@ -64,6 +92,7 @@ jobs:
   agent:
     name: Agent (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    needs: plan
     # One shared target dir (cargo's default location) so
     # Swatinem/rust-cache actually caches the agent build. Each job
     # builds a single triple and nothing else, so xtask's per-triple
@@ -404,6 +433,26 @@ jobs:
           --target ${{ matrix.target }}
           --bundles dmg
           --config '{"build":{"beforeBuildCommand":""}}'
+      # Check the artifact as a user's Mac will: Gatekeeper must accept the
+      # app as notarized with the ticket stapled (the DMG itself is signed,
+      # not notarized; Gatekeeper assesses the app inside), and the agents
+      # sealed into it must still carry their signatures.
+      - name: Verify signature and notarization
+        if: needs.plan.outputs.signed == 'true'
+        run: |
+          DMG=$(ls target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          codesign --verify --strict --verbose=2 "$DMG"
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG"
+          trap 'hdiutil detach "$MNT"' EXIT
+          APP=$(ls -d "$MNT"/*.app)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          for agent in "$APP"/Contents/Resources/agents/*-apple-darwin/newt-agent; do
+            codesign --verify --strict --verbose=2 "$agent"
+          done
+          spctl --assess --type execute --verbose=4 "$APP" 2>&1 | tee spctl.log
+          grep -q "source=Notarized Developer ID" spctl.log
+          xcrun stapler validate "$APP"
       - uses: actions/upload-artifact@v6
         with:
           name: package-macos-${{ matrix.arch }}
