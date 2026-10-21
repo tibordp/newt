@@ -485,6 +485,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2018 Grzegorz Antoniak (http://antoniak.org)
       Copyright (C) 2013-2016 Eric Biggers
       Copyright 2022 Eric Biggers
+      Copyright (c) 2010, 2011, Google Inc.  All rights reserved.
       Copyright (c) 2025 Scott Mudge
       Copyright (c) Microsoft Corporation.
       Copyright (c) 2019-2026 Benedikt Reinartz
