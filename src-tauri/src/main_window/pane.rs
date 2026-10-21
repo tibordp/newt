@@ -1520,6 +1520,33 @@ impl Pane {
         }
     }
 
+    /// What a drag that started on `grabbed` carries: the whole effective
+    /// selection when the row is part of it — not just the rows the
+    /// frontend has on screen — else the row alone. In list order.
+    pub fn dnd_files(&self, grabbed: &str) -> Vec<crate::main_window::DndFile> {
+        Self::dragged(&self.view_state.read(), grabbed)
+    }
+
+    fn dragged(view_state: &PaneViewState, grabbed: &str) -> Vec<crate::main_window::DndFile> {
+        let keys = if view_state.all_selected.contains(grabbed) {
+            Self::effective_keys(view_state)
+        } else {
+            vec![grabbed.to_owned()]
+        };
+        let mut entries: Vec<(usize, String)> = keys
+            .into_iter()
+            .filter_map(|key| Some((*view_state.file_lookup.get(&key)?, key)))
+            .collect();
+        entries.sort_unstable_by_key(|&(index, _)| index);
+        entries
+            .into_iter()
+            .map(|(index, name)| crate::main_window::DndFile {
+                is_dir: view_state.files[index].is_dir,
+                name,
+            })
+            .collect()
+    }
+
     /// Paths of the effective selection. See [`Self::effective_keys`].
     pub fn get_effective_selection(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
@@ -3250,6 +3277,25 @@ mod tests {
         vs.set_sorting(descending, false);
         assert_eq!(vs.viewport_hint.0, 3);
         assert_eq!(vs.scroll_shift, 0);
+    }
+
+    #[test]
+    fn a_drag_from_the_selection_carries_all_of_it() {
+        let names: Vec<String> = (0..300).map(|i| format!("f{i:03}")).collect();
+        let mut entries: Vec<(&str, bool)> = vec![("..", true)];
+        entries.extend(names.iter().map(|n| (n.as_str(), false)));
+        let mut vs = listed(&entries);
+        // Far more than any window holds, the grabbed row among them.
+        vs.all_selected = names[..250].iter().rev().cloned().collect();
+
+        let dragged = Pane::dragged(&vs, "f010");
+        let dragged: Vec<&str> = dragged.iter().map(|f| f.name.as_str()).collect();
+        let expected: Vec<&str> = names[..250].iter().map(String::as_str).collect();
+        assert_eq!(dragged, expected);
+
+        let alone = Pane::dragged(&vs, "f299");
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].name, "f299");
     }
 
     #[test]

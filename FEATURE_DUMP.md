@@ -428,7 +428,7 @@ All but Copy Path are the pane's ordinary commands, acting on the pane whose bar
 ### Drag and Drop
 
 - Drag one or more files from one pane to the other by dragging anywhere in the Name column — the icon, the name, or the blank space after it. Dragging in any other column or below the last row draws a selection rectangle instead.
-- **Multi-file drag**: If multiple files are selected, dragging any selected file drags them all. A ghost preview shows "N items" at the cursor.
+- **Multi-file drag**: If multiple files are selected, dragging any selected file drags them all — the whole selection, scrolled out of view or not. A ghost preview shows "N items" at the cursor. Dragging a file that isn't selected drags just that file and leaves the selection as it is (as Total Commander does); the keyboard's F5/F6, which act on the selection wherever the cursor is, can therefore act on a different set than a drag starting on the cursor row.
 - A drop starts the copy or move at once — no Copy/Move dialog. Navigating the pane cancels a drag (or a marquee) in progress.
 - **Drop targets**: Drop on a folder to copy/move into it, or on `..` to copy/move to wherever `..` leads (the folder holding an archive, at its root). Drop on the pane background to copy/move to the pane's current directory. A drop copies with the Copy dialog's stock options — the platform's defaults, not the toggles F5 remembers: on macOS extended attributes (tags, quarantine) and resource forks come along, on Windows alternate streams.
 - **Modifier keys**: Normal drop = copy. Shift+drop = move.

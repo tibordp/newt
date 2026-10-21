@@ -3,7 +3,6 @@ import { ReactElement } from "react";
 import type {
   Annotation,
   ContextBadge,
-  DndFile,
   FileView,
   FilterMode,
   SizeUnits,
@@ -98,11 +97,6 @@ export function recursiveSize(row: FileView): RecursiveSize | undefined {
   const a = row.annotations?.find((a) => "recursive_size" in a);
   return a && "recursive_size" in a ? a.recursive_size : undefined;
 }
-
-/// Local DnD info kept by the source pane while a drag is in flight.
-/// Mirrors the codegen `DndFile` shape but kept separately so the local code
-/// doesn't drift when DndFile gains optional fields.
-export type DndFileInfo = DndFile;
 
 /// Window event carrying a keyboard-requested context menu to the active
 /// pane, dispatched by the document-level handler in MainWindow.

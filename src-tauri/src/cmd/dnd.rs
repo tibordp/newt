@@ -3,7 +3,7 @@ use newt_common::vfs::VfsPath;
 
 use crate::common::{Error, RawArgs};
 use crate::main_window::pane::{PARENT_KEY, Pane};
-use crate::main_window::{DndData, DndFile, MainWindowContext, MainWindowState, PaneHandle};
+use crate::main_window::{DndData, MainWindowContext, MainWindowState, PaneHandle};
 use crate::runtime_state::CopyMoveDefaults;
 
 /// Where a drop on `pane` lands: its directory, the folder row it hit, or —
@@ -23,8 +23,13 @@ fn drop_destination(pane: &Pane, subdirectory: Option<&str>) -> VfsPath {
 pub fn start_dnd(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
-    files: Vec<DndFile>,
+    grabbed: String,
 ) -> Result<(), Error> {
+    let files = ctx
+        .panes()
+        .get(pane_handle)
+        .ok_or_else(|| Error::Custom("no such pane".into()))?
+        .dnd_files(&grabbed);
     ctx.with_update(|gs| {
         *gs.dnd.0.write() = Some(DndData::new(pane_handle, files));
         Ok(())

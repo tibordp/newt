@@ -958,9 +958,9 @@ async activateTerminal(handle: TerminalHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async startDnd(paneHandle: PaneHandle, files: DndFile[]) : Promise<Result<null, string>> {
+async startDnd(paneHandle: PaneHandle, grabbed: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_dnd", { paneHandle, files }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_dnd", { paneHandle, grabbed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

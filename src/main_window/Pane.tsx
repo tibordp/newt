@@ -33,7 +33,6 @@ import {
   ContextBadge,
   FilterMode,
   PaneState,
-  DndFileInfo,
   FileRowContext,
   isExecutable,
   isPackage,
@@ -238,18 +237,29 @@ type LocalDndState = {
   active: boolean;
   startX: number;
   startY: number;
-  files: DndFileInfo[];
+  /** The row the drag started on. Rust widens it to the whole selection
+   * when it is part of one: the window holds only the rows on screen. */
+  grabbed: string;
+  /** The grabbed row is selected, so the drag carries the selection. */
+  carriesSelection: boolean;
+  count: number;
+  /** The file's name, or "N items". */
+  label: string;
   /** The glyph of a single dragged file; absent for a folder or several. */
   icon?: FileIconGlyph;
   /** An escalation to a native OS drag is in flight (or done). */
   escalating?: boolean;
 };
 
+/// Whether the drag carries the row `name`. Only rows on screen are asked
+/// about, and those are in the window, where its selection is exact.
+function isDragged(dnd: LocalDndState, selected: Set<string>, name: string) {
+  return dnd.carriesSelection ? selected.has(name) : name === dnd.grabbed;
+}
+
 /// The glyph a lone dragged file shows in the drag ghost, as the list shows
-/// it; none for a folder or several files.
-function dragIcon(files: FileView[]): FileIconGlyph | undefined {
-  if (files.length !== 1) return undefined;
-  const f = files[0];
+/// it; none for a folder.
+function dragIcon(f: FileView): FileIconGlyph | undefined {
   const pkg = isPackage(f);
   if (f.is_dir && !pkg) return undefined;
   return fileIconGlyph(f.name, { isPackage: pkg, executable: isExecutable(f) });
@@ -263,11 +273,10 @@ function dragIcon(files: FileView[]): FileIconGlyph | undefined {
  * draw double-size; slight blur on retina displays is accepted.
  */
 async function renderDragImage(
-  files: DndFileInfo[],
+  label: string,
   icon: FileIconGlyph | undefined,
 ): Promise<Uint8Array> {
   try {
-    const label = files.length === 1 ? files[0].name : `${files.length} items`;
     const bodyStyle = getComputedStyle(document.body);
     const font = `${bodyStyle.fontSize} ${bodyStyle.fontFamily}`;
     const iconW = icon ? 22 : 0;
@@ -866,7 +875,7 @@ function resolveDropTarget(x: number, y: number): DropTarget | null {
 function highlightDropTarget(
   target: DropTarget,
   sourcePaneHandle?: number,
-  excludeNames?: Set<string>,
+  isDragged?: (name: string) => boolean,
 ) {
   clearDropHighlights();
   const isCrossPane =
@@ -874,7 +883,7 @@ function highlightDropTarget(
 
   // Try to highlight a folder row
   if (target.subdirectory) {
-    if (!excludeNames || !excludeNames.has(target.subdirectory)) {
+    if (!isDragged?.(target.subdirectory)) {
       const li = target.paneEl.querySelector(
         `li[data-name="${CSS.escape(target.subdirectory)}"]`,
       );
@@ -1171,6 +1180,8 @@ function PaneInner(
   fileWindowRef.current = file_window;
   const selectedLookupRef = useRef(selectedLookup);
   selectedLookupRef.current = selectedLookup;
+  const statsRef = useRef(stats);
+  statsRef.current = stats;
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
 
@@ -1538,24 +1549,24 @@ function PaneInner(
       e.preventDefault();
       e.stopPropagation(); // prevent drag-to-select
 
-      const fw = fileWindowRef.current;
-      const currentSelected = selectedLookupRef.current;
-      const fileKey = (f: FileView) => f.key ?? f.name;
-      const filesToDrag = currentSelected.has(fileName)
-        ? fw.items.filter(
-            (f) => currentSelected.has(fileKey(f)) && f.name !== "..",
-          )
-        : [fw.items.find((f) => fileKey(f) === fileName)!];
+      const grabbed = fileWindowRef.current.items.find(
+        (f) => (f.key ?? f.name) === fileName,
+      )!;
+      const carriesSelection = selectedLookupRef.current.has(fileName);
+      const selected = statsRef.current;
+      const count = carriesSelection
+        ? selected.selected_file_count + selected.selected_dir_count
+        : 1;
 
       dndRef.current = {
         active: false,
         startX: e.clientX,
         startY: e.clientY,
-        files: filesToDrag.map((f) => ({
-          name: fileKey(f),
-          is_dir: f.is_dir,
-        })),
-        icon: dragIcon(filesToDrag),
+        grabbed: fileName,
+        carriesSelection,
+        count,
+        label: count === 1 ? grabbed.name : `${count} items`,
+        icon: count === 1 ? dragIcon(grabbed) : undefined,
       };
     },
     [paneHandle],
@@ -1577,7 +1588,7 @@ function PaneInner(
       if (!dnd?.active || dnd.escalating) return;
       dnd.escalating = true;
       try {
-        const image = await renderDragImage(dnd.files, dnd.icon);
+        const image = await renderDragImage(dnd.label, dnd.icon);
         const accepted = await rawCommands.dndDragOut(image);
         if (accepted.status === "ok" && accepted.data) {
           cleanupDnd();
@@ -1630,8 +1641,7 @@ function PaneInner(
         // Populate and show ghost
         const ghost = dndGhostRef.current;
         if (ghost) {
-          if (dnd.files.length === 1) {
-            const f = dnd.files[0];
+          if (dnd.count === 1) {
             const icon = document.createElement("div");
             if (dnd.icon) {
               icon.className = dnd.icon.md ? "file-icon md" : "file-icon";
@@ -1640,14 +1650,14 @@ function PaneInner(
             } else {
               icon.className = "file-icon folder";
             }
-            ghost.replaceChildren(icon, ` ${f.name}`);
+            ghost.replaceChildren(icon, ` ${dnd.label}`);
           } else {
-            ghost.textContent = `${dnd.files.length} items`;
+            ghost.textContent = dnd.label;
           }
           ghost.style.display = "flex";
         }
 
-        safeSilent(commands.startDnd(paneHandle, dnd.files));
+        safeSilent(commands.startDnd(paneHandle, dnd.grabbed));
       }
 
       // Position ghost
@@ -1661,10 +1671,13 @@ function PaneInner(
       const target = resolveDropTarget(e.clientX, e.clientY);
       if (target) {
         const dnd = dndRef.current;
-        const draggedNames = dnd
-          ? new Set(dnd.files.map((f) => f.name))
-          : undefined;
-        highlightDropTarget(target, paneHandle, draggedNames);
+        highlightDropTarget(
+          target,
+          paneHandle,
+          dnd
+            ? (name) => isDragged(dnd, selectedLookupRef.current, name)
+            : undefined,
+        );
       } else {
         clearDropHighlights();
       }
@@ -1695,8 +1708,7 @@ function PaneInner(
 
       // In same pane: don't drop onto dirs being dragged (can't drop into yourself)
       if (isSamePane && subdirectory) {
-        const draggedNames = new Set(dnd.files.map((f) => f.name));
-        if (draggedNames.has(subdirectory)) {
+        if (isDragged(dnd, selectedLookupRef.current, subdirectory)) {
           subdirectory = null;
         }
       }
