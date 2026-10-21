@@ -204,6 +204,14 @@ pub(super) fn full(bytes: impl Into<Bytes>) -> Body {
         .boxed_unsync()
 }
 
+fn json_response(value: &impl serde::Serialize) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(full(serde_json::to_vec(value).unwrap_or_default()))
+        .unwrap()
+}
+
 fn status_response(status: StatusCode, message: impl Into<Bytes>) -> Response<Body> {
     Response::builder()
         .status(status)
@@ -238,11 +246,45 @@ struct TransferBody {
     cwd: String,
 }
 
+#[derive(Deserialize)]
+struct DeleteBody {
+    paths: Vec<String>,
+    #[serde(default)]
+    cwd: String,
+    #[serde(default)]
+    recursive: bool,
+    #[serde(default)]
+    permanent: bool,
+}
+
+#[derive(Deserialize)]
+struct MkdirBody {
+    paths: Vec<String>,
+    #[serde(default)]
+    cwd: String,
+    #[serde(default)]
+    parents: bool,
+}
+
 fn query_param(query: Option<&str>, key: &str) -> Option<String> {
     let query = query?;
     url::form_urlencoded::parse(query.as_bytes())
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.into_owned())
+}
+
+/// A boolean query flag: `?wait=1` (or `true`); absent is false.
+fn query_flag(query: Option<&str>, key: &str) -> bool {
+    query_param(query, key).is_some_and(|v| v == "1" || v == "true")
+}
+
+/// The `?pane=` of a route that isn't under `/v1/panes/{pane}`; the active
+/// pane when absent, `None` when unknown.
+fn query_pane(query: Option<&str>) -> Option<PaneSelector> {
+    query_param(query, "pane")
+        .as_deref()
+        .map(PaneSelector::parse)
+        .unwrap_or(Some(PaneSelector::Active))
 }
 
 async fn read_json_body<T: serde::de::DeserializeOwned>(
@@ -269,6 +311,14 @@ async fn route(
     let control = match (&method, segments.as_slice()) {
         (&Method::GET, ["v1", "panes", pane, "cwd"]) => match PaneSelector::parse(pane) {
             Some(pane) => ControlRequest::Pwd { pane },
+            None => return status_response(StatusCode::NOT_FOUND, "unknown pane"),
+        },
+        (&Method::GET, ["v1", "panes", pane, "entries"]) => match PaneSelector::parse(pane) {
+            Some(pane) => ControlRequest::List {
+                pane,
+                selection: query_flag(query.as_deref(), "selection"),
+                all: query_flag(query.as_deref(), "all"),
+            },
             None => return status_response(StatusCode::NOT_FOUND, "unknown pane"),
         },
         (&Method::POST, ["v1", "panes", pane, verb @ ("cd" | "focus")]) => {
@@ -304,11 +354,7 @@ async fn route(
         }
         (&Method::GET, ["v1", "commands"]) => ControlRequest::ListCommands,
         (&Method::POST, ["v1", "commands", id]) => {
-            let pane = query_param(query.as_deref(), "pane")
-                .as_deref()
-                .map(PaneSelector::parse)
-                .unwrap_or(Some(PaneSelector::Active));
-            let Some(pane) = pane else {
+            let Some(pane) = query_pane(query.as_deref()) else {
                 return status_response(StatusCode::NOT_FOUND, "unknown pane");
             };
             ControlRequest::Command {
@@ -355,11 +401,7 @@ async fn route(
         }
         (&Method::POST, ["v1", verb @ ("view" | "edit")]) => {
             let edit = *verb == "edit";
-            let pane = query_param(query.as_deref(), "pane")
-                .as_deref()
-                .map(PaneSelector::parse)
-                .unwrap_or(Some(PaneSelector::Active));
-            let Some(pane) = pane else {
+            let Some(pane) = query_pane(query.as_deref()) else {
                 return status_response(StatusCode::NOT_FOUND, "unknown pane");
             };
             let body: PathBody = match read_json_body(req).await {
@@ -371,15 +413,12 @@ async fn route(
                 path: body.path,
                 cwd: body.cwd,
                 edit,
+                wait: query_flag(query.as_deref(), "wait"),
             }
         }
         (&Method::POST, ["v1", "operations", op @ ("copy" | "move")]) => {
             let move_files = *op == "move";
-            let pane = query_param(query.as_deref(), "pane")
-                .as_deref()
-                .map(PaneSelector::parse)
-                .unwrap_or(Some(PaneSelector::Active));
-            let Some(pane) = pane else {
+            let Some(pane) = query_pane(query.as_deref()) else {
                 return status_response(StatusCode::NOT_FOUND, "unknown pane");
             };
             let body: TransferBody = match read_json_body(req).await {
@@ -392,6 +431,39 @@ async fn route(
                 sources: body.sources,
                 dest: body.dest,
                 cwd: body.cwd,
+                wait: query_flag(query.as_deref(), "wait"),
+            }
+        }
+        (&Method::POST, ["v1", "operations", "delete"]) => {
+            let Some(pane) = query_pane(query.as_deref()) else {
+                return status_response(StatusCode::NOT_FOUND, "unknown pane");
+            };
+            let body: DeleteBody = match read_json_body(req).await {
+                Ok(b) => b,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
+            };
+            ControlRequest::Delete {
+                pane,
+                paths: body.paths,
+                cwd: body.cwd,
+                recursive: body.recursive,
+                permanent: body.permanent,
+                wait: query_flag(query.as_deref(), "wait"),
+            }
+        }
+        (&Method::POST, ["v1", "mkdir"]) => {
+            let Some(pane) = query_pane(query.as_deref()) else {
+                return status_response(StatusCode::NOT_FOUND, "unknown pane");
+            };
+            let body: MkdirBody = match read_json_body(req).await {
+                Ok(b) => b,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
+            };
+            ControlRequest::MakeDirectory {
+                pane,
+                paths: body.paths,
+                cwd: body.cwd,
+                parents: body.parents,
             }
         }
         _ => return status_response(StatusCode::NOT_FOUND, "unknown route"),
@@ -400,11 +472,8 @@ async fn route(
     match handler.control(control).await {
         Ok(ControlResponse::Ok) => status_response(StatusCode::OK, ""),
         Ok(ControlResponse::Text(text)) => status_response(StatusCode::OK, text),
-        Ok(ControlResponse::Commands(commands)) => Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/json")
-            .body(full(serde_json::to_vec(&commands).unwrap_or_default()))
-            .unwrap(),
+        Ok(ControlResponse::Commands(commands)) => json_response(&commands),
+        Ok(ControlResponse::Entries(entries)) => json_response(&entries),
         // ResolvedFile is internal to the read route above.
         Ok(ControlResponse::ResolvedFile(_)) => {
             status_response(StatusCode::INTERNAL_SERVER_ERROR, "unexpected response")
@@ -482,6 +551,29 @@ mod tests {
                     "{} {} {mode:?}",
                     patterns.len(),
                     names.len()
+                ))),
+                ControlRequest::List { selection, .. } => {
+                    Ok(ControlResponse::Entries(vec![super::super::ListEntry {
+                        name: if selection { "picked" } else { "all" }.into(),
+                        path: "/mock/dir/x".into(),
+                        kind: super::super::EntryKind::Dir,
+                        size: None,
+                        modified: Some(1),
+                        mode: None,
+                        user: None,
+                        group: None,
+                        target: None,
+                    }]))
+                }
+                ControlRequest::Delete {
+                    paths,
+                    recursive,
+                    permanent,
+                    wait,
+                    ..
+                } => Ok(ControlResponse::Text(format!(
+                    "{} {recursive} {permanent} {wait}",
+                    paths.join(",")
                 ))),
                 ControlRequest::ResolveFile { path, .. } => {
                     Ok(ControlResponse::ResolvedFile(VfsPath::new(
@@ -589,6 +681,24 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"hello world");
 
+        let (status, body) =
+            send(&si, Method::GET, "/v1/panes/active/entries?selection=1", "").await;
+        assert_eq!(status, StatusCode::OK);
+        let entries: Vec<super::super::ListEntry> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(entries[0].name, "picked");
+        assert_eq!(entries[0].kind, super::super::EntryKind::Dir);
+
+        // Flags absent from an older CLI's body default to off.
+        let (status, body) = send(
+            &si,
+            Method::POST,
+            "/v1/operations/delete?wait=1",
+            r#"{"paths":["a","b"],"recursive":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"a,b true false true");
+
         // unknown routes / panes stay graceful
         let (status, _) = send(&si, Method::GET, "/v2/nope", "").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -607,5 +717,78 @@ mod tests {
         let dir = dir.to_path_buf();
         drop(si);
         assert!(!dir.exists());
+    }
+
+    /// Holds a request open, reporting when it arrives and when it is
+    /// dropped.
+    struct PendingHandler {
+        arrived: parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        dropped: parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    }
+
+    struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ShellControlHandler for PendingHandler {
+        async fn control(&self, _req: ControlRequest) -> ControlResult {
+            let _signal = DropSignal(self.dropped.lock().take());
+            if let Some(tx) = self.arrived.lock().take() {
+                let _ = tx.send(());
+            }
+            std::future::pending().await
+        }
+
+        async fn read_file(&self, _path: VfsPath) -> Result<ByteStream, String> {
+            unreachable!()
+        }
+    }
+
+    /// `--wait` cancels by dropping: a client that goes away mid-request
+    /// must take the handler's future with it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_client_hanging_up_drops_the_request() {
+        let (arrived_tx, arrived) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped) = tokio::sync::oneshot::channel();
+        let si = ShellIntegration::start(
+            std::path::Path::new("/bin/true"),
+            Arc::new(PendingHandler {
+                arrived: parking_lot::Mutex::new(Some(arrived_tx)),
+                dropped: parking_lot::Mutex::new(Some(dropped_tx)),
+            }),
+        )
+        .unwrap();
+
+        let stream = tokio::net::UnixStream::connect(si.sock_addr())
+            .await
+            .unwrap();
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .unwrap();
+        let conn = tokio::spawn(conn);
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/operations/copy?wait=1")
+            .header("host", "newt")
+            .body(full(r#"{"sources":["a"],"dest":"b"}"#))
+            .unwrap();
+        let response = tokio::spawn(async move { sender.send_request(req).await });
+
+        arrived.await.unwrap();
+        response.abort();
+        conn.abort();
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), dropped)
+            .await
+            .expect("the handler's future outlived its client")
+            .unwrap();
     }
 }

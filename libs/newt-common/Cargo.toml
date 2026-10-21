@@ -57,6 +57,8 @@ http-body-util = "0.1"
 nucleo-matcher = { version = "0.3", default-features = false, features = ["unicode-normalization", "unicode-casefold"] }
 ignore = "0.4"
 percent-encoding = "2"
+clap_complete = "4"
+jiff = "0.2"
 
 [dev-dependencies]
 serde_json = "1"

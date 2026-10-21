@@ -1158,7 +1158,7 @@ pub async fn open_viewer(ctx: MainWindowContext, path: VfsPath) -> Result<(), Er
     if details.mode.as_ref().is_some_and(Mode::is_special) {
         return Err(crate::cmd::window::not_regular(&ctx, &path));
     }
-    crate::cmd::window::open_viewer_window(&ctx, &path)
+    crate::cmd::window::open_viewer_window(&ctx, &path).map(drop)
 }
 
 /// Pick the preview's encoding; `None` is auto-detect.

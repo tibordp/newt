@@ -179,13 +179,14 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         return Err(not_regular(&ctx, &full_path));
     }
 
-    open_viewer_window(&ctx, &full_path)
+    open_viewer_window(&ctx, &full_path).map(drop)
 }
 
+/// Open the viewer on `full_path`, returning its window.
 pub(crate) fn open_viewer_window(
     ctx: &MainWindowContext,
     full_path: &VfsPath,
-) -> Result<(), Error> {
+) -> Result<WebviewWindow, Error> {
     let full_path = full_path.clone();
     let app_handle = ctx.window().app_handle().clone();
     let main_label = ctx.main_window_label().to_string();
@@ -194,7 +195,7 @@ pub(crate) fn open_viewer_window(
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
 
     // Try to use a pre-warmed viewer window
-    if let Some(pw) = global_ctx.take_prewarmed_viewer(&main_label) {
+    let window = if let Some(pw) = global_ctx.take_prewarmed_viewer(&main_label) {
         let viewer_ctx = global_ctx
             .viewer_window(&pw.label)
             .expect("pre-warmed viewer must be registered");
@@ -206,6 +207,7 @@ pub(crate) fn open_viewer_window(
 
         let _ = pw.window.set_title(&format!("{} - Viewer", path_display));
         show_prewarmed_sized(&app_handle, &pw.window, ChildWindow::Viewer);
+        pw.window
     } else {
         // Fallback: create the window visible right away.
         let title = format!("{} - Viewer", path_display);
@@ -221,25 +223,27 @@ pub(crate) fn open_viewer_window(
         viewer.set_file(full_path, path_display, file_server_base);
         crate::viewer::activate_viewer_window(&app_handle, &label, &window, &viewer)?;
         global_ctx.register_viewer_window(&label, crate::viewer::ViewerWindowContext(viewer));
-    }
+        window
+    };
 
     // Always replenish the pre-warm slot for the next F3.
     prewarm_viewer(&app_handle, ctx, &main_label);
 
-    Ok(())
+    Ok(window)
 }
 
+/// Open the editor on `full_path`, returning its window.
 pub(crate) fn open_editor_window(
     ctx: &MainWindowContext,
     full_path: &VfsPath,
-) -> Result<(), Error> {
+) -> Result<WebviewWindow, Error> {
     let app_handle = ctx.window().app_handle().clone();
     let main_label = ctx.main_window_label().to_string();
     let path_display = ctx.format_vfs_path(full_path);
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
 
     // Try to use a pre-warmed editor window
-    if let Some(pw) = global_ctx.take_prewarmed_editor(&main_label) {
+    let window = if let Some(pw) = global_ctx.take_prewarmed_editor(&main_label) {
         let editor_ctx = global_ctx
             .editor_window(&pw.label)
             .expect("pre-warmed editor must be registered");
@@ -251,6 +255,7 @@ pub(crate) fn open_editor_window(
 
         let _ = pw.window.set_title(&format!("{} - Editor", path_display));
         show_prewarmed_sized(&app_handle, &pw.window, ChildWindow::Editor);
+        pw.window
     } else {
         // Fallback: create the window visible right away.
         let title = format!("{} - Editor", path_display);
@@ -266,12 +271,13 @@ pub(crate) fn open_editor_window(
         editor.set_file(full_path.clone(), path_display);
         crate::editor::activate_editor_window(&app_handle, &label, &window, &editor)?;
         global_ctx.register_editor_window(&label, crate::editor::EditorWindowContext(editor));
-    }
+        window
+    };
 
     // Always replenish the pre-warm slot for the next F4.
     prewarm_editor(&app_handle, ctx, &main_label);
 
-    Ok(())
+    Ok(window)
 }
 
 #[tauri::command]
@@ -289,7 +295,7 @@ pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         return Err(not_regular(&ctx, &full_path));
     }
 
-    open_editor_window(&ctx, &full_path)
+    open_editor_window(&ctx, &full_path).map(drop)
 }
 
 /// The viewer and editor read their file, and reading a FIFO, socket or

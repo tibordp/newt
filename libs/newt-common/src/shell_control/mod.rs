@@ -52,6 +52,13 @@ pub enum ControlRequest {
     Pwd {
         pane: PaneSelector,
     },
+    /// `ls`: the pane's entries as listed, its effective selection, or
+    /// (`all`) every entry including those the pane hides.
+    List {
+        pane: PaneSelector,
+        selection: bool,
+        all: bool,
+    },
     /// `cd` and `focus`: non-strict navigate (a leaf path lands on the
     /// parent with the entry focused).
     Navigate {
@@ -85,21 +92,43 @@ pub enum ControlRequest {
         path: String,
         cwd: String,
     },
-    /// Open the built-in viewer (or editor) on the host.
+    /// Open the built-in viewer (or editor) on the host. `wait` answers
+    /// only once the window has closed.
     Open {
         pane: PaneSelector,
         path: String,
         cwd: String,
         edit: bool,
+        wait: bool,
     },
     /// `cp` / `mv` through the operations framework. `pane` only anchors
-    /// path resolution (which mount a relative fragment lives in).
+    /// path resolution (which mount a relative fragment lives in). `wait`
+    /// answers only once the operation has ended, and cancels it if the
+    /// request is dropped first.
     Transfer {
         pane: PaneSelector,
         move_files: bool,
         sources: Vec<String>,
         dest: String,
         cwd: String,
+        wait: bool,
+    },
+    /// `rm` through the operations framework; `wait` as for `Transfer`.
+    Delete {
+        pane: PaneSelector,
+        paths: Vec<String>,
+        cwd: String,
+        recursive: bool,
+        permanent: bool,
+        wait: bool,
+    },
+    /// `mkdir`; `parents` creates missing ancestors and accepts an
+    /// existing directory.
+    MakeDirectory {
+        pane: PaneSelector,
+        paths: Vec<String>,
+        cwd: String,
+        parents: bool,
     },
 }
 
@@ -117,11 +146,41 @@ pub struct CommandListEntry {
     pub name: String,
 }
 
+/// One entry of `newt ls`, as its `--json` prints it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListEntry {
+    pub name: String,
+    /// Display path, which `newt cd` and the other verbs accept back; the
+    /// real file for an entry of a synthetic VFS such as search results.
+    pub path: String,
+    pub kind: EntryKind,
+    pub size: Option<u64>,
+    /// Seconds since the Unix epoch.
+    pub modified: Option<i64>,
+    /// `st_mode`, type bits included.
+    pub mode: Option<u32>,
+    pub user: Option<String>,
+    pub group: Option<String>,
+    /// A symlink's target.
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind {
+    File,
+    Dir,
+    Symlink,
+    /// A FIFO, socket or device.
+    Special,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControlResponse {
     Ok,
     Text(String),
     Commands(Vec<CommandListEntry>),
+    Entries(Vec<ListEntry>),
     ResolvedFile(VfsPath),
 }
 

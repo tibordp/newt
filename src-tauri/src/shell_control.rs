@@ -9,16 +9,16 @@ use std::sync::Arc;
 
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::{ByteStream, file_reader_stream};
-use newt_common::operation::{CopyOptions, OperationRequest};
+use newt_common::operation::{CopyOptions, OperationId, OperationRequest};
 use newt_common::rpc::Dispatcher;
 use newt_common::shell_control::{
-    CommandListEntry, ControlRequest, ControlResponse, ControlResult, PaneSelector, SelectMode,
-    ShellControlHandler,
+    CommandListEntry, ControlRequest, ControlResponse, ControlResult, EntryKind, ListEntry,
+    PaneSelector, SelectMode, ShellControlHandler,
 };
 use newt_common::vfs::{VfsId, VfsPath};
 
 use crate::GlobalContext;
-use crate::main_window::{MainWindowContext, PaneHandle};
+use crate::main_window::{MainWindowContext, Outcome, PaneHandle};
 
 /// Look up the owning window's `MainWindowContext` on every request — the
 /// session (and this handler) is constructed before the context is
@@ -158,6 +158,31 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             let display = ctx.format_vfs_path(&pane.path());
             Ok(ControlResponse::Text(display))
         }
+        ControlRequest::List {
+            pane,
+            selection,
+            all,
+        } => {
+            use crate::main_window::pane::EntrySet;
+            let handle = select_pane(ctx, pane);
+            let pane = ctx
+                .panes()
+                .get(handle)
+                .ok_or_else(|| "no such pane".to_string())?;
+            let set = if all {
+                EntrySet::All
+            } else if selection {
+                EntrySet::Selection
+            } else {
+                EntrySet::Listed
+            };
+            let entries = pane
+                .listed_entries(set)
+                .into_iter()
+                .map(|(path, file)| list_entry(ctx, &path, file))
+                .collect();
+            Ok(ControlResponse::Entries(entries))
+        }
         ControlRequest::Navigate { pane, path, cwd } => {
             let handle = select_pane(ctx, pane);
             let target = resolve_arg(ctx, handle, &path, ArgBase::Cwd(&cwd)).await?;
@@ -214,6 +239,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
         }
         ControlRequest::Command { pane, id } => {
             let handle = select_pane(ctx, pane);
+            let id = command_id(ctx, &id)?;
             if crate::cmd::invoke_palette_command(ctx, &id, handle)
                 .await
                 .map_err(err)?
@@ -251,6 +277,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             path,
             cwd,
             edit,
+            wait,
         } => {
             let _ = cwd;
             let handle = select_pane(ctx, pane);
@@ -267,10 +294,13 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             }) {
                 return Err(err(crate::cmd::window::not_regular(ctx, &resolved)));
             }
-            if edit {
-                crate::cmd::window::open_editor_window(ctx, &resolved).map_err(err)?;
+            let window = if edit {
+                crate::cmd::window::open_editor_window(ctx, &resolved).map_err(err)?
             } else {
-                crate::cmd::window::open_viewer_window(ctx, &resolved).map_err(err)?;
+                crate::cmd::window::open_viewer_window(ctx, &resolved).map_err(err)?
+            };
+            if wait {
+                closed(&window).await;
             }
             Ok(ControlResponse::Ok)
         }
@@ -280,15 +310,259 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             sources,
             dest,
             cwd,
+            wait,
         } => {
             let handle = select_pane(ctx, pane);
             let request = build_transfer(ctx, handle, move_files, sources, &dest, &cwd).await?;
-            let id = crate::cmd::operations::start_operation(ctx.clone(), request)
-                .await
-                .map_err(err)?;
-            Ok(ControlResponse::Text(format!("operation {id}")))
+            run_operation(ctx, request, wait).await
+        }
+        ControlRequest::Delete {
+            pane,
+            paths,
+            cwd,
+            recursive,
+            permanent,
+            wait,
+        } => {
+            let handle = select_pane(ctx, pane);
+            let request = build_delete(ctx, handle, &paths, &cwd, recursive, permanent).await?;
+            run_operation(ctx, request, wait).await
+        }
+        ControlRequest::MakeDirectory {
+            pane,
+            paths,
+            cwd,
+            parents,
+        } => {
+            let handle = select_pane(ctx, pane);
+            let fs = ctx.fs().map_err(err)?;
+            let mut created = Vec::new();
+            for path in &paths {
+                let dir = resolve_arg(ctx, handle, path, ArgBase::Cwd(&cwd)).await?;
+                let result = if parents {
+                    create_with_parents(fs.as_ref(), &dir, &mut created).await
+                } else {
+                    fs.create_directory(dir.clone())
+                        .await
+                        .map(|()| created.push(dir.clone()))
+                };
+                if let Err(e) = result {
+                    ctx.refresh_panes_at(&parent_dirs(&created)).await;
+                    return Err(format!("cannot create {}: {e}", ctx.format_vfs_path(&dir)));
+                }
+            }
+            ctx.refresh_panes_at(&parent_dirs(&created)).await;
+            Ok(ControlResponse::Ok)
         }
     }
+}
+
+fn list_entry(ctx: &MainWindowContext, path: &VfsPath, file: newt_common::vfs::File) -> ListEntry {
+    let kind = if file.symlink.is_some() {
+        EntryKind::Symlink
+    } else if file.is_dir {
+        EntryKind::Dir
+    } else if file
+        .mode
+        .as_ref()
+        .is_some_and(newt_common::vfs::Mode::is_special)
+    {
+        EntryKind::Special
+    } else {
+        EntryKind::File
+    };
+    let owner = |owner: Option<newt_common::vfs::UserGroup>| {
+        owner.map(|owner| match owner {
+            newt_common::vfs::UserGroup::Name(name) => name,
+            newt_common::vfs::UserGroup::Id(id) => id.to_string(),
+        })
+    };
+    ListEntry {
+        path: ctx.format_vfs_path(path),
+        name: file.name,
+        kind,
+        size: file.size,
+        modified: file.modified.map(|ms| ms.div_euclid(1000)),
+        mode: file.mode.map(|mode| mode.0),
+        user: owner(file.user),
+        group: owner(file.group),
+        target: file
+            .symlink
+            .and_then(|link| link.target().map(str::to_string)),
+    }
+}
+
+/// The registry id `newt cmd` was given, or the id of the one user command
+/// titled that way (ignoring case).
+fn command_id(ctx: &MainWindowContext, name: &str) -> Result<String, String> {
+    use tauri::Manager;
+    let app_handle = ctx.window().app_handle().clone();
+    let global: tauri::State<GlobalContext> = app_handle.state();
+    let commands = global.preferences().resolved().commands;
+    if commands.iter().any(|c| c.id == name) {
+        return Ok(name.to_string());
+    }
+    let wanted = name.to_lowercase();
+    let mut titled = commands
+        .into_iter()
+        .filter(|c| c.id.starts_with("user_command_") && c.name.to_lowercase() == wanted);
+    match (titled.next(), titled.next()) {
+        (Some(command), None) => Ok(command.id),
+        (Some(_), Some(_)) => Err(format!("several user commands are titled {name:?}")),
+        (None, _) => Err(format!("unknown command: {name}")),
+    }
+}
+
+/// Resolves once `window` has been destroyed.
+async fn closed(window: &tauri::WebviewWindow) {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = parking_lot::Mutex::new(Some(tx));
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed)
+            && let Some(tx) = tx.lock().take()
+        {
+            let _ = tx.send(());
+        }
+    });
+    // An error means the window, and its handler with it, is already gone.
+    let _ = rx.await;
+}
+
+/// Start `request`. Without `wait`, answer with its id at once; with it,
+/// answer once it has ended, cancelling it if this future is dropped first
+/// — which is what a `newt` interrupted mid-wait does to it.
+async fn run_operation(
+    ctx: &MainWindowContext,
+    request: OperationRequest,
+    wait: bool,
+) -> ControlResult {
+    if !wait {
+        let id = crate::cmd::operations::start_operation(ctx.clone(), request)
+            .await
+            .map_err(err)?;
+        return Ok(ControlResponse::Text(format!("operation {id}")));
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let id = crate::cmd::operations::start_operation_with_end_hook(
+        ctx.clone(),
+        request,
+        Some(Box::new(move |outcome| {
+            let _ = tx.send(outcome);
+        })),
+    )
+    .await
+    .map_err(err)?;
+    let mut cancel = CancelOnDrop(Some((ctx.clone(), id)));
+    let outcome = rx.await;
+    cancel.0 = None;
+    match outcome {
+        Ok(Outcome::Completed) => Ok(ControlResponse::Ok),
+        Ok(Outcome::Failed) => Err(ctx
+            .operations()
+            .state
+            .read()
+            .get(&id)
+            .and_then(|op| op.error.clone())
+            .unwrap_or_else(|| "operation failed".to_string())),
+        Ok(Outcome::Cancelled) => Err("operation cancelled".to_string()),
+        Err(_) => Err("the session ended".to_string()),
+    }
+}
+
+/// Cancels the operation it holds when dropped.
+struct CancelOnDrop(Option<(MainWindowContext, OperationId)>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some((ctx, id)) = self.0.take() {
+            tauri::async_runtime::spawn(async move {
+                if let Ok(client) = ctx.operations_client() {
+                    let _ = client.cancel_operation(id).await;
+                }
+            });
+        }
+    }
+}
+
+/// `rm` semantics: directories need `recursive`; items go to the trash
+/// when `behavior.delete_to_trash` says so, and a target with no trash is
+/// refused rather than deleted unless `permanent`.
+async fn build_delete(
+    ctx: &MainWindowContext,
+    pane: PaneHandle,
+    paths: &[String],
+    cwd: &str,
+    recursive: bool,
+    permanent: bool,
+) -> Result<OperationRequest, String> {
+    use tauri::Manager;
+    let fs = ctx.fs().map_err(err)?;
+    let mut targets = Vec::with_capacity(paths.len());
+    for path in paths {
+        let target = resolve_arg(ctx, pane, path, ArgBase::Cwd(cwd)).await?;
+        let details = fs
+            .file_info(target.clone(), false)
+            .await
+            .map_err(|e| format!("{path}: {e}"))?;
+        if details.is_dir && !recursive {
+            return Err(format!("{path} is a directory (use --recursive)"));
+        }
+        targets.push(target);
+    }
+    let app_handle = ctx.window().app_handle().clone();
+    let global: tauri::State<GlobalContext> = app_handle.state();
+    let to_trash = !permanent && global.preferences().settings().behavior.delete_to_trash;
+    if to_trash {
+        let vfs_info = ctx.vfs_info().map_err(err)?;
+        if let Some(target) = targets.iter().find(|t| {
+            !vfs_info
+                .descriptor(t.vfs_id)
+                .is_some_and(|(d, _)| d.can_trash())
+        }) {
+            return Err(format!(
+                "{} has no trash here (use --permanent to delete it)",
+                ctx.format_vfs_path(target)
+            ));
+        }
+    }
+    Ok(OperationRequest::Delete {
+        paths: targets,
+        to_trash,
+        cross_mount_points: false,
+    })
+}
+
+/// Create `dir` and whichever of its ancestors are missing, recording each
+/// directory created. An existing directory is no error.
+async fn create_with_parents(
+    fs: &dyn Filesystem,
+    dir: &VfsPath,
+    created: &mut Vec<VfsPath>,
+) -> Result<(), newt_common::Error> {
+    let mut missing = Vec::new();
+    let mut cursor = Some(dir.clone());
+    while let Some(path) = cursor {
+        match fs.file_info(path.clone(), true).await {
+            Ok(details) if details.is_dir => break,
+            Ok(_) => return Err(newt_common::Error::custom("not a directory")),
+            Err(_) => {
+                cursor = path.parent();
+                missing.push(path);
+            }
+        }
+    }
+    for path in missing.into_iter().rev() {
+        fs.create_directory(path.clone()).await?;
+        created.push(path);
+    }
+    Ok(())
+}
+
+fn parent_dirs(paths: &[VfsPath]) -> Vec<VfsPath> {
+    let mut dirs: Vec<VfsPath> = paths.iter().filter_map(VfsPath::parent).collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }
 
 /// Entry keys for `newt select` names. A bare name (no separator) is a

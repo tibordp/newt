@@ -1547,6 +1547,49 @@ impl Pane {
             .collect()
     }
 
+    /// The entries in list order and without `..`: those listed, the
+    /// effective selection's (see [`Self::effective_keys`]), or with
+    /// [`EntrySet::All`] also those the hidden-file setting and the filter
+    /// leave out. Each with the path of the file it stands for — the real
+    /// file for an entry of a synthetic VFS such as search results.
+    pub fn listed_entries(&self, set: EntrySet) -> Vec<(VfsPath, newt_common::vfs::File)> {
+        let view_state = self.view_state.read();
+        let files: Vec<&File> = match set {
+            EntrySet::Listed => view_state.files.iter().collect(),
+            EntrySet::Selection => {
+                let mut indices: Vec<usize> = Self::effective_keys(&view_state)
+                    .iter()
+                    .filter_map(|key| view_state.file_lookup.get(key).copied())
+                    .collect();
+                indices.sort_unstable();
+                indices
+                    .into_iter()
+                    .map(|index| &view_state.files[index])
+                    .collect()
+            }
+            EntrySet::All => {
+                let mut files: Vec<&File> = view_state
+                    .all_files
+                    .iter()
+                    .chain(&view_state.hidden_files)
+                    .collect();
+                files.sort_by(|a, b| view_state.compare(a, b));
+                files
+            }
+        };
+        files
+            .into_iter()
+            .filter(|file| file.key() != PARENT_KEY)
+            .map(|file| {
+                let path = file
+                    .source
+                    .clone()
+                    .unwrap_or_else(|| view_state.path.join(file.key()));
+                (path, file.clone())
+            })
+            .collect()
+    }
+
     /// Paths of the effective selection. See [`Self::effective_keys`].
     pub fn get_effective_selection(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
@@ -1796,6 +1839,14 @@ struct SelectionSession {
     anchor: Option<String>,
 }
 
+/// Which entries [`Pane::listed_entries`] returns.
+#[derive(Clone, Copy)]
+pub enum EntrySet {
+    Listed,
+    Selection,
+    All,
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct PaneViewState {
@@ -1856,7 +1907,7 @@ pub struct PaneViewState {
     enrichment_badges: std::collections::BTreeMap<String, Vec<ContextBadge>>,
     /// Hidden entries dropped from the listing (see `PaneStats::hidden_count`).
     #[serde(skip)]
-    hidden_count: usize,
+    hidden_files: Vec<File>,
 
     /// Full sorted/filtered file list (not serialized — only the window is sent).
     #[serde(skip)]
@@ -1922,7 +1973,7 @@ impl PaneViewState {
 
     fn recompute_stats(&mut self) {
         let mut stats = PaneStats {
-            hidden_count: self.hidden_count,
+            hidden_count: self.hidden_files.len(),
             ..PaneStats::default()
         };
         for f in &self.files {
@@ -2272,56 +2323,9 @@ impl PaneViewState {
 
     fn sort(&mut self, folders_first: bool) {
         self.folders_first = folders_first;
-        let enrichments = &self.enrichments;
-        self.files.sort_by(|a, b| {
-            if a.name == PARENT_KEY {
-                return std::cmp::Ordering::Less;
-            } else if b.name == PARENT_KEY {
-                return std::cmp::Ordering::Greater;
-            }
-
-            if folders_first {
-                if a.is_dir && !b.is_dir {
-                    return std::cmp::Ordering::Less;
-                } else if !a.is_dir && b.is_dir {
-                    return std::cmp::Ordering::Greater;
-                }
-            }
-
-            let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
-            match self.sorting.key {
-                SortingKey::Name => {
-                    let by_character = || {
-                        a.name
-                            .to_lowercase()
-                            .cmp(&b.name.to_lowercase())
-                            .then_with(|| a.name.cmp(&b.name))
-                    };
-                    if self.natural_sort {
-                        natural_cmp(&a.name, &b.name).then_with(by_character)
-                    } else {
-                        by_character()
-                    }
-                }
-                SortingKey::Extension => compare_extension(a, b),
-                SortingKey::Size => {
-                    Self::effective_size(enrichments, a).cmp(&Self::effective_size(enrichments, b))
-                }
-                SortingKey::User => a
-                    .user
-                    .partial_cmp(&b.user)
-                    .unwrap_or(std::cmp::Ordering::Less),
-                SortingKey::Group => a
-                    .group
-                    .partial_cmp(&b.group)
-                    .unwrap_or(std::cmp::Ordering::Less),
-                SortingKey::Mode => a.mode.cmp(&b.mode),
-                SortingKey::Attributes => a.attributes.cmp(&b.attributes),
-                SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
-                SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
-                SortingKey::Created => a.created.unwrap_or(0).cmp(&b.created.unwrap_or(0)),
-            }
-        });
+        let mut files = std::mem::take(&mut self.files);
+        files.sort_by(|a, b| self.compare(a, b));
+        self.files = files;
 
         self.file_lookup = self
             .files
@@ -2330,6 +2334,59 @@ impl PaneViewState {
             .map(|(index, file)| (file.key().to_string(), index))
             .collect();
         self.file_generation += 1;
+    }
+
+    /// The listing's order: `..` first, then folders first if so set, then
+    /// the sort key.
+    fn compare(&self, a: &File, b: &File) -> std::cmp::Ordering {
+        let enrichments = &self.enrichments;
+        if a.name == PARENT_KEY {
+            return std::cmp::Ordering::Less;
+        } else if b.name == PARENT_KEY {
+            return std::cmp::Ordering::Greater;
+        }
+
+        if self.folders_first {
+            if a.is_dir && !b.is_dir {
+                return std::cmp::Ordering::Less;
+            } else if !a.is_dir && b.is_dir {
+                return std::cmp::Ordering::Greater;
+            }
+        }
+
+        let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
+        match self.sorting.key {
+            SortingKey::Name => {
+                let by_character = || {
+                    a.name
+                        .to_lowercase()
+                        .cmp(&b.name.to_lowercase())
+                        .then_with(|| a.name.cmp(&b.name))
+                };
+                if self.natural_sort {
+                    natural_cmp(&a.name, &b.name).then_with(by_character)
+                } else {
+                    by_character()
+                }
+            }
+            SortingKey::Extension => compare_extension(a, b),
+            SortingKey::Size => {
+                Self::effective_size(enrichments, a).cmp(&Self::effective_size(enrichments, b))
+            }
+            SortingKey::User => a
+                .user
+                .partial_cmp(&b.user)
+                .unwrap_or(std::cmp::Ordering::Less),
+            SortingKey::Group => a
+                .group
+                .partial_cmp(&b.group)
+                .unwrap_or(std::cmp::Ordering::Less),
+            SortingKey::Mode => a.mode.cmp(&b.mode),
+            SortingKey::Attributes => a.attributes.cmp(&b.attributes),
+            SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
+            SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
+            SortingKey::Created => a.created.unwrap_or(0).cmp(&b.created.unwrap_or(0)),
+        }
     }
 
     fn update_focus(&mut self) {
@@ -2487,14 +2544,15 @@ impl PaneViewState {
         }
         self.path = file_list.path().clone();
         self.fs_stats = file_list.fs_stats().cloned();
-        self.hidden_count = if display_options.show_hidden {
-            0
+        self.hidden_files = if display_options.show_hidden {
+            Vec::new()
         } else {
             file_list
                 .files()
                 .iter()
                 .filter(|f| f.is_hidden && f.name != PARENT_KEY)
-                .count()
+                .cloned()
+                .collect()
         };
         self.files = file_list
             .files()

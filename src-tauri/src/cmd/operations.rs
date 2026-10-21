@@ -374,6 +374,23 @@ pub async fn start_operation_with_callback(
     request: OperationRequest,
     on_completed: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<OperationId, Error> {
+    let on_end = on_completed.map(|cb| -> Box<dyn FnOnce(Outcome) + Send> {
+        Box::new(move |outcome| {
+            if outcome == Outcome::Completed {
+                cb();
+            }
+        })
+    });
+    start_operation_with_end_hook(ctx, request, on_end).await
+}
+
+/// Like `start_operation_with_callback`, but `on_end` hears every ending.
+/// It runs under the operations lock, so it must not touch their state.
+pub async fn start_operation_with_end_hook(
+    ctx: MainWindowContext,
+    request: OperationRequest,
+    on_end: Option<Box<dyn FnOnce(Outcome) + Send>>,
+) -> Result<OperationId, Error> {
     let id = ctx.next_operation_id()?;
 
     refresh_when_finished(&ctx, id, changed_dirs(&request));
@@ -483,12 +500,8 @@ pub async fn start_operation_with_callback(
     }
     ctx.publish()?;
 
-    if let Some(cb) = on_completed {
-        ctx.operations().on_end(id, move |outcome| {
-            if outcome == Outcome::Completed {
-                cb();
-            }
-        });
+    if let Some(hook) = on_end {
+        ctx.operations().on_end(id, hook);
     }
 
     // Send to operations client

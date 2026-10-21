@@ -5,8 +5,7 @@
 Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 
 - `behavior.shell_integration = false` gates local sessions only; agents always create the control server (they can't see host preferences). Propagate the flag at agent spawn (env for bootstrap transports like `NEWT_AGENT_MODE`, an arg for direct spawns) if disabling remotely turns out to matter.
-- `newt cp --wait` (long-poll an operations endpoint for completion, exit code from the operation result).
-- Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, user-command invocation by title.
+- Per-terminal pane affinity (`NEWT_TERMINAL` is already injected).
 - Deeper shell integration: a script injected into bash, zsh, fish and PowerShell that emits prompt markers (OSC 133: prompt, command start, command end) and reports the shell's directory, for a two-way working-directory sync between a terminal and its pane. Busy detection rides on it — the foreground process group (`tcgetpgrp` on the PTY) on Unix, the shell's child processes on Windows, both answered on the agent in a remote session — so the Close Window prompt can name what is running (`vim`, `make`) and leave idle shells alone; today it counts every open terminal.
 
 ## Remote sessions and agent mounts
