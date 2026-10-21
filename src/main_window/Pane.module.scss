@@ -35,10 +35,18 @@
   align-self: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
+  // Centered between the pane's edge and the VFS selector's label: the
+  // label sits 5px inside the selector's box (border and padding), so the
+  // selector is pulled 2px closer.
+  margin-left: 1px;
   border: 1px solid var(--color-fg-muted);
   border-radius: 50%;
+
+  & + .vfsSelector {
+    margin-left: -2px;
+  }
 
   .headerCurrent & {
     background: var(--color-fg-muted);
