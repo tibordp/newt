@@ -222,6 +222,12 @@ async fn delete_entry(
         let Err(e) = result else {
             return Ok(());
         };
+        // Already gone, which is what deleting it was for: on macOS, deleting
+        // a file on a volume without xattr support (exFAT, FAT) takes
+        // its `._` AppleDouble companion along, still listed to come next.
+        if e.kind == crate::ErrorKind::NotFound {
+            return Ok(());
+        }
         match reporter
             .handle_io_error(
                 e,

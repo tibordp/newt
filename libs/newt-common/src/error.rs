@@ -81,6 +81,16 @@ impl From<std::io::Error> for Error {
         if let Some(inner) = e.get_ref().and_then(|inner| inner.downcast_ref::<Error>()) {
             return inner.clone();
         }
+        // Stable std maps only EOPNOTSUPP to `Unsupported`; on macOS,
+        // ENOTSUP (what xattr calls answer) is a different number. Drop once
+        // rust-lang/rust#158580 reaches the stable toolchain.
+        #[cfg(unix)]
+        if e.raw_os_error() == Some(libc::ENOTSUP) {
+            return Self {
+                kind: ErrorKind::NotSupported,
+                message: e.to_string(),
+            };
+        }
         let kind = match e.kind() {
             std::io::ErrorKind::NotFound => ErrorKind::NotFound,
             std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
@@ -137,6 +147,19 @@ impl From<notify::Error> for Error {
         Self {
             kind: ErrorKind::Other,
             message: e.to_string(),
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn both_not_supported_errnos_map_to_not_supported() {
+        for errno in [libc::ENOTSUP, libc::EOPNOTSUPP] {
+            let error = Error::from(std::io::Error::from_raw_os_error(errno));
+            assert_eq!(error.kind, ErrorKind::NotSupported, "errno {errno}");
         }
     }
 }

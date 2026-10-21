@@ -241,6 +241,38 @@ async fn test_delete_single_file() {
 }
 
 #[tokio::test]
+async fn test_delete_counts_an_entry_already_gone_as_deleted() {
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_remove_tree: false,
+            ..Default::default()
+        })
+        .file("/a", b"data")
+        .file("/._a", b"appledouble")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/._a"),
+            operation: "remove_file",
+            error: crate::Error::not_found("No such file or directory"),
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a"), vfs_path("/._a")],
+            to_trash: false,
+            cross_mount_points: false,
+        },
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/a"));
+}
+
+#[tokio::test]
 async fn test_delete_directory_with_remove_tree() {
     let vfs = MockVfs::builder()
         .dir("/mydir")

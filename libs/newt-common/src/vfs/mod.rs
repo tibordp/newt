@@ -844,7 +844,8 @@ pub trait Vfs: Send + Sync {
                     _ => Err(Error::custom("source account name is unavailable")),
                 }
             }
-            _ => Err(Error::not_supported()),
+            // A filesystem that keeps none of these has none to carry.
+            _ => Ok(None),
         }
     }
 

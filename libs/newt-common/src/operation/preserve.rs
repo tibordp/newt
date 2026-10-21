@@ -19,6 +19,12 @@ pub(super) async fn resolve_preservation(
     if error.kind == crate::ErrorKind::Cancelled {
         return Err(error);
     }
+    // The filesystem keeps no such attribute: a source has none to carry,
+    // and a destination can't take it — told at the call, since one
+    // protocol can front filesystems that differ. Nothing to retry.
+    if error.kind == crate::ErrorKind::NotSupported {
+        return Ok(false);
+    }
     match reporter
         .raise_issue(
             IssueKind::PreservationFailed(kind),

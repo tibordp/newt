@@ -244,6 +244,48 @@ async fn destinations_without_metadata_support_are_not_prompted() {
 }
 
 #[tokio::test]
+async fn sources_without_an_attribute_have_none_to_carry() {
+    // MockVfs keeps no xattrs, ACLs or streams, like an archive or SFTP.
+    let vfs = MockVfs::builder()
+        .file("/src/a", b"hello")
+        .dir("/dst")
+        .build();
+    let result = run_operation(
+        vfs,
+        copy_request(CopyOptions {
+            preserve_xattrs: true,
+            preserve_acl: true,
+            preserve_streams: true,
+            ..Default::default()
+        }),
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/src/a"), b"hello");
+}
+
+#[tokio::test]
+async fn destinations_that_cannot_take_an_attribute_are_not_prompted() {
+    let vfs = MockVfs::builder()
+        .file_with_mode("/src/a", b"hello", 0o700)
+        .dir("/dst")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/dst/src/a"),
+            operation: "set_metadata",
+            error: crate::Error::not_supported(),
+            remaining: None,
+        })
+        .build();
+    let result = run_operation(vfs, copy_request(Default::default()), |issue| {
+        panic!("unexpected issue: {}", issue.message)
+    })
+    .await;
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/src/a"), b"hello");
+}
+
+#[tokio::test]
 async fn permissions_can_be_left_to_destination_defaults() {
     let vfs = MockVfs::builder()
         .file_with_mode("/src/a", b"hello", 0o700)
