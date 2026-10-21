@@ -1,8 +1,6 @@
 pub mod batch_rename;
 #[cfg(windows)]
 pub mod drives;
-#[cfg(windows)]
-pub mod elevate;
 #[cfg(target_os = "macos")]
 pub mod menu;
 pub mod pane;
@@ -11,8 +9,6 @@ pub mod session;
 #[cfg(windows)]
 pub mod shell_menu;
 pub mod terminal;
-#[cfg(windows)]
-pub mod win_proc;
 #[cfg(windows)]
 pub mod wsl_launch;
 

@@ -5,6 +5,11 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Shared types, RPC protocol, VFS traits, and operation logic for Newt"
 
+[features]
+# Elevated sessions run a copy of the agent staged in $XDG_RUNTIME_DIR. For
+# the AppImage only: root can't see the user's FUSE mount it runs from.
+elevate-agent-copy = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
@@ -66,7 +71,7 @@ zip = "8"
 xattr = "1.6.1"
 expanduser = "*"
 libc = "0.2"
-nix = { version = "0.31", features = ["fs", "user"] }
+nix = { version = "0.31", features = ["fs", "socket", "uio", "user"] }
 pty-process = { path = "../pty-process" }
 
 [target.'cfg(windows)'.dependencies]
@@ -85,6 +90,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Authorization",
     "Win32_System_IO",
     "Win32_System_Ioctl",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 uuid = { version = "1", features = ["v4"] }
 windows = { version = "0.62", features = [

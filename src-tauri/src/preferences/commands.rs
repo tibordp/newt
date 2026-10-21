@@ -651,18 +651,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: false,
             scope: CommandScope::Main,
         },
-        @cfg(any(target_os = "linux", windows)) {
-            CommandDef {
-                id: "open_elevated".into(),
-                name: "Open Elevated".into(),
-                short_name: None,
-                category: "File".into(),
-                default_keys: vec![],
-                default_when: None,
-                needs_pane: false,
+        CommandDef {
+            id: "open_elevated".into(),
+            name: "Open Elevated".into(),
+            short_name: None,
+            category: "File".into(),
+            default_keys: vec![],
+            default_when: None,
+            needs_pane: false,
             scope: CommandScope::Main,
-            },
-        }
+        },
         @cfg(windows) {
             CommandDef {
                 id: "connect_wsl".into(),

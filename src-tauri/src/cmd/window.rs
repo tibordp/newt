@@ -379,7 +379,6 @@ pub async fn connect_target(
     crate::connections::connect_kind(&ctx, pane_handle, kind, open_in, Some(host_access)).await
 }
 
-#[cfg(any(target_os = "linux", windows))]
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open_elevated(
@@ -395,15 +394,6 @@ pub async fn cmd_open_elevated(
         ),
     )?;
     Ok(())
-}
-
-#[cfg(not(any(target_os = "linux", windows)))]
-#[tauri::command]
-#[specta::specta]
-pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
-    Err(Error::Custom(
-        "Elevated mode is not supported on this platform".into(),
-    ))
 }
 
 /// Top-level "Connect to WSL Distribution..." command. With one distro,

@@ -78,13 +78,13 @@ struct Args {
     )]
     wsl: Option<String>,
 
-    /// Open an elevated session (Linux: pkexec; Windows: UAC).
+    /// Open an elevated (root / administrator) session.
     #[cfg(windows)]
     #[arg(long, conflicts_with_all = ["target", "profile", "wsl"])]
     elevated: bool,
 
-    /// Open an elevated session (Linux: pkexec; Windows: UAC).
-    #[cfg(target_os = "linux")]
+    /// Open an elevated (root / administrator) session.
+    #[cfg(not(windows))]
     #[arg(long, conflicts_with_all = ["target", "profile"])]
     elevated: bool,
 
@@ -916,13 +916,9 @@ fn parse_target(s: &str) -> Result<(ConnectionTarget, SessionIdentity, String), 
                 "Elevated".to_string(),
             ));
         }
-        // Cross-platform spelling: pkexec on Linux, UAC on Windows.
+        // Cross-platform spelling: pkexec on Linux, Authorization Services on
+        // macOS, UAC on Windows.
         "elevated" => {
-            if cfg!(not(any(target_os = "linux", windows))) {
-                return Err(Error::Custom(
-                    "elevated mode is not supported on this platform".into(),
-                ));
-            }
             return Ok((
                 ConnectionTarget::Elevated,
                 SessionIdentity::elevated(),
@@ -1140,9 +1136,9 @@ fn main() {
         None => non_profile,
     };
 
-    // `--elevated` (pkexec on Linux, UAC on Windows). Conflicts with
-    // `--target`/`--profile`/`--wsl`, so this just overrides the default.
-    #[cfg(any(target_os = "linux", windows))]
+    // `--elevated` (pkexec on Linux, Authorization Services on macOS, UAC on
+    // Windows). Conflicts with `--target`/`--profile`/`--wsl`, so this just
+    // overrides the default.
     let non_profile = if args.elevated {
         Some((
             ConnectionTarget::Elevated,

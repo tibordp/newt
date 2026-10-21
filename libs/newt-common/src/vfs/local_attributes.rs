@@ -207,7 +207,7 @@ fn streams(path: &std::path::Path) -> Result<Vec<NamedStream>, Error> {
     {
         windows::streams(path)
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
     {
         let _ = path;
         Ok(Vec::new())
@@ -323,14 +323,6 @@ mod macos {
 use macos::{read as acl_read, write as acl_write};
 #[cfg(windows)]
 use windows::{read as acl_read, write as acl_write};
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn acl_read(_path: &std::path::Path) -> Result<Attribute, Error> {
-    Err(Error::not_supported())
-}
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn acl_write(_path: &std::path::Path, _format: &str, _data: &[u8]) -> Result<(), Error> {
-    Err(Error::not_supported())
-}
 
 #[cfg(windows)]
 mod windows {
@@ -537,8 +529,6 @@ pub(crate) fn punch_holes(file: &std::fs::File, holes: &[(u64, u64)]) -> Result<
                 (end - start) as i64,
             )
         };
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let result = 0;
         if result != 0 {
             return Err(std::io::Error::last_os_error().into());
         }

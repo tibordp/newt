@@ -17,7 +17,7 @@ backend and a React/TypeScript frontend.
   (`newt cd`, `newt select`, `newt cp`, …).
 - **Keyboard-first** — F-key operations, quick search by typing, a regex filter, a command
   palette, Go to File (Mod+G), and every command rebindable per context.
-- **Remote sessions** — SSH, Docker, Podman, Kubernetes, WSL and elevated (pkexec / UAC)
+- **Remote sessions** — SSH, Docker, Podman, Kubernetes, WSL and elevated (pkexec / macOS authorization / UAC)
   sessions run the whole app — panes, terminals, operations — on the other side through a small
   agent binary. Any of those can also be mounted in a single pane, and your own machine can stay
   reachable from a session (if you allow it), so local↔remote copies are just copies.

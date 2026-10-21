@@ -601,7 +601,7 @@ impl Default for EnvironmentPreferences {
             "/snap/bin".into(),
             "/var/lib/flatpak/exports/bin".into(),
         ];
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(windows)]
         let extra_path: Vec<String> = Vec::new();
         Self { extra_path }
     }

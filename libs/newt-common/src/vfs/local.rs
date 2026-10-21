@@ -1334,11 +1334,6 @@ pub(super) fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Erro
     Ok(())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub(super) fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
-    Err(Error::not_supported())
-}
-
 /// What Launch Services says about a path, as Finder sees it.
 #[cfg(target_os = "macos")]
 mod launch_services {
@@ -1431,7 +1426,7 @@ fn exchange(a: &StdPath, b: &StdPath) -> Result<(), Error> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
 fn exchange(_a: &StdPath, _b: &StdPath) -> Result<(), Error> {
     Err(Error::not_supported())
 }

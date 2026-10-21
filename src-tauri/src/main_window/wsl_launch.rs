@@ -9,7 +9,7 @@
 //!
 //! `WslLaunch` returns a raw Win32 process `HANDLE` plus whatever stdio
 //! handles we hand it. The process is owned via the shared
-//! [`super::win_proc::WinProcess`] wrapper. The stdio pipe handles *can* be
+//! [`newt_common::win_proc::WinProcess`] wrapper. The stdio pipe handles *can* be
 //! adopted (`File::from_raw_handle`); we wrap them in `tokio::fs::File`,
 //! whose read/write run on tokio's blocking pool — the simplest correct
 //! bridge for anonymous pipes (no overlapped I/O).
@@ -29,8 +29,8 @@ use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 
-use super::win_proc::WinProcess;
 use crate::common::Error;
+use newt_common::win_proc::WinProcess;
 
 /// `HRESULT WslLaunch(PCWSTR, PCWSTR, BOOL, HANDLE, HANDLE, HANDLE, HANDLE*)`.
 type WslLaunchFn = unsafe extern "system" fn(

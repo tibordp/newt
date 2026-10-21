@@ -1555,7 +1555,7 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 | SSH | `--target=ssh:user@host` | Uses `~/.ssh/config`, askpass for passwords / host keys. Login-shell bootstrap (see below). |
 | SSH (agent forwarding) | `--target=ssh-agent:user@host` | Adds `-A`. Lets the remote agent's SSH/SFTP invocations reuse host keys. |
 | pkexec | `--target=pkexec` | Linux only. Elevated agent via Polkit. |
-| Elevated | `--target=elevated` / `--elevated` | Linux: pkexec. Windows: UAC (`ShellExecuteEx "runas"`) + named-pipe agent. |
+| Elevated | `--target=elevated` / `--elevated` | Linux: pkexec. macOS: Authorization Services. Windows: UAC (`ShellExecuteEx "runas"`) + named-pipe agent. |
 | Docker | `--target=docker:[user@]<container>` | Default: bootstrapless (`docker cp` + direct exec). Local engine, fast transfer, works for sh-less images. |
 | Docker (bootstrap) | `--target=docker-bootstrap:[user@]<container>` | Opt back into the sh bootstrap (hash-keyed agent cache; avoids re-upload on reconnect). |
 | Podman | `--target=podman:[user@]<container>` | Same shape / default as docker. |
@@ -1613,11 +1613,13 @@ No shell or coreutils in the container required, but every connect re-uploads (n
 
 **Process safety**: Spawned transports (`ssh`, `docker`, `pkexec`, …) are killed when their session ends; on Linux they also run with `PR_SET_PDEATHSIG=SIGTERM`, so a crash of the Newt process takes them down too. The remote agent then exits because its connection closed. SSH transports always add `-o ServerAliveInterval=30 -o ServerAliveCountMax=3`, and put `--` before the host.
 
-### Elevated Mode (Linux pkexec / Windows UAC)
+### Elevated Mode (Linux pkexec / macOS Authorization Services / Windows UAC)
 
-**Connecting**: Via command palette ("Open Elevated", which opens a new window), `--elevated`, or `--target=elevated`. Available on Linux and Windows (macOS has no equivalent with usable IPC). Same session UX as any remote: connection overlay, reconnect (re-prompts), child watcher.
+**Connecting**: Via command palette ("Open Elevated", which opens a new window), `--elevated`, or `--target=elevated`. Available on Linux, macOS and Windows. Same session UX as any remote: connection overlay, reconnect (re-prompts), child watcher.
 
 **Linux**: spawns `pkexec <agent-binary-path>`; the Polkit dialog prompts for the password; RPC runs over the agent's stdin/stdout. The agent runs as root. The AppImage runs from a FUSE mount that root can't see, so it first copies the agent to `$XDG_RUNTIME_DIR/newt/` (once per build) and elevates that copy, which is the path the Polkit dialog names.
+
+**macOS**: Authorization Services' `AuthorizationExecuteWithPrivileges` — the system's own dialog asks for an administrator's password (Newt never sees it), then the setuid `security_authtrampoline` starts the agent as root, with RPC over the socket the call returns. The call has been deprecated since macOS 10.7 and Apple says it will be removed; Newt looks it up at runtime, so if a macOS release drops it, Open Elevated reports that elevated mode isn't supported there rather than Newt failing to start. The agent finishes becoming root itself (real uid, groups) and replaces the inherited environment with root's (`HOME`, `USER`, `LOGNAME` and `SHELL` from root's passwd entry, `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, the locale kept) — what pkexec leaves on Linux. Its log reaches the connection log. Cancelling the dialog surfaces "Elevation request was declined"; while it is up the session stays at "Waiting for authorization...", since it can't be dismissed from Newt's side.
 
 **Windows**: `ShellExecuteEx "runas"` launches the native `newt-agent.exe` elevated (UAC consent prompt). Because `runas` cannot redirect stdio, RPC instead runs over a **named pipe**: the host creates a single-instance server at an unguessable `\\.\pipe\newt-elevated-<uuid>` and passes `--pipe <name>` to the agent, which connects back. The host GUI stays **unelevated** (only the agent is elevated) — drag-and-drop / clipboard from normal apps keep working. While the prompt is up the status reads "Waiting for authorization..."; the host waits 30 seconds for the elevated agent to connect. Declining UAC surfaces a friendly "Elevation request was declined" in the connection overlay. Agent stderr/logs are unavailable in this mode (`runas` carries no console/stdio).
 

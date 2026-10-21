@@ -4,8 +4,6 @@ use newt_common::enrich::{
 };
 use newt_common::filesystem::Filesystem;
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
-#[cfg(target_os = "linux")]
-use newt_common::proc::NoConsoleWindow;
 use newt_common::rpc::Communicator;
 use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
@@ -17,8 +15,6 @@ use newt_common::vfs::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -34,8 +30,6 @@ pub use newt_common::connect::{
     DirectCopyPlan, SpawnSpec, docker_direct_copy_plan, docker_transport_cmd, kube_transport_cmd,
     podman_direct_copy_plan, podman_transport_cmd, ssh_transport_cmd,
 };
-#[cfg(target_os = "linux")]
-use newt_common::proc::set_parent_death_signal;
 
 // ---------------------------------------------------------------------------
 // ConnectionTarget
@@ -45,7 +39,8 @@ use newt_common::proc::set_parent_death_signal;
 pub enum ConnectionTarget {
     /// No subprocess: services run directly in the Tauri process.
     Local,
-    /// pkexec-elevated agent on the local machine (Linux only).
+    /// Root agent on the local machine: pkexec on Linux, Authorization
+    /// Services on macOS, UAC on Windows.
     Elevated,
     /// Agent launched inside a WSL distribution via `wslapi!WslLaunch`
     /// (Windows only). The bundled Linux-musl agent is exec'd directly
@@ -1018,10 +1013,11 @@ fn create_rpc_services(
 #[cfg_attr(windows, allow(clippy::large_enum_variant))]
 enum AgentProcess {
     Child(tokio::process::Child),
-    /// Raw Win32 process handle (WSL `WslLaunch` / elevated `ShellExecuteEx`),
-    /// wrapped because it can't be adopted into a `tokio::process::Child`.
+    /// Raw Win32 process handle (WSL `WslLaunch`), wrapped because it can't
+    /// be adopted into a `tokio::process::Child`.
     #[cfg(windows)]
-    Win(super::win_proc::WinProcess),
+    Win(newt_common::win_proc::WinProcess),
+    Elevated(newt_common::elevation::AgentProcess),
 }
 
 impl AgentProcess {
@@ -1030,12 +1026,13 @@ impl AgentProcess {
             AgentProcess::Child(c) => c.wait().await,
             #[cfg(windows)]
             AgentProcess::Win(w) => w.wait().await,
+            AgentProcess::Elevated(p) => p.wait().await,
         }
     }
 }
 
 /// A spawned agent connection adapted to the host's process handle type
-/// (WSL / elevated use raw Win32 handles that aren't `tokio::process::Child`).
+/// (WSL and elevated agents aren't a `tokio::process::Child`).
 struct ChildConnection {
     child: AgentProcess,
     stderr: Option<DynStderr>,
@@ -1043,6 +1040,17 @@ struct ChildConnection {
     /// Askpass listener tied to the ssh process; dropped when the connection
     /// tears down. `None` for elevated / WSL mode (no askpass).
     _askpass: Option<newt_common::askpass::AskpassListener>,
+}
+
+impl From<newt_common::elevation::ElevatedAgent> for ChildConnection {
+    fn from(agent: newt_common::elevation::ElevatedAgent) -> Self {
+        Self {
+            child: AgentProcess::Elevated(agent.process),
+            stderr: agent.stderr,
+            stream: agent.stream,
+            _askpass: None,
+        }
+    }
 }
 
 impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
@@ -1054,87 +1062,6 @@ impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
             _askpass: conn.askpass,
         }
     }
-}
-
-/// Spawn pkexec + agent binary (elevated mode, Linux).
-#[cfg(target_os = "linux")]
-async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
-    let agent_path = agent_resolver.find_local_agent_binary()?;
-    #[cfg(feature = "elevate-agent-copy")]
-    let agent_path = stage_agent_for_root(agent_resolver, &agent_path).await?;
-    let mut cmd = tokio::process::Command::new("pkexec");
-    cmd.no_console_window();
-    cmd.arg(&agent_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    set_parent_death_signal(&mut cmd);
-    if let Ok(rust_log) = std::env::var("RUST_LOG") {
-        cmd.env("RUST_LOG", rust_log);
-    }
-    let mut child = cmd.spawn()?;
-
-    let stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(stdout);
-    let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
-    let stream = tokio_duplex::Duplex::new(rx, tx);
-
-    Ok(ChildConnection {
-        child: AgentProcess::Child(child),
-        stream,
-        stderr: Some(Box::new(stderr)),
-        _askpass: None,
-    })
-}
-
-/// Copy the agent where root can run it. The AppImage runs from its user's
-/// FUSE mount, which root can't see, so `pkexec` can't start the agent in
-/// place. The copy goes to the user's runtime dir (a private tmpfs, cleared
-/// at logout), named by the agents' hash so one build stages it once.
-#[cfg(all(target_os = "linux", feature = "elevate-agent-copy"))]
-async fn stage_agent_for_root(
-    agent_resolver: &dyn AgentResolver,
-    agent: &std::path::Path,
-) -> Result<std::path::PathBuf, Error> {
-    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
-        Error::Custom("an elevated session needs XDG_RUNTIME_DIR to stage the agent".into())
-    })?;
-    let dir = std::path::PathBuf::from(runtime_dir).join("newt");
-    tokio::fs::create_dir_all(&dir).await?;
-    let name = format!("newt-agent-{}", agent_resolver.agent_hash().await?);
-    let staged = dir.join(&name);
-    if !tokio::fs::try_exists(&staged).await? {
-        let partial = dir.join(format!(".{name}.{}", std::process::id()));
-        tokio::fs::copy(agent, &partial).await?;
-        tokio::fs::rename(&partial, &staged).await?;
-    }
-    Ok(staged)
-}
-
-/// Spawn an elevated agent via UAC (`ShellExecuteEx "runas"`) and connect to
-/// it over a named pipe (stdio can't cross the UAC boundary).
-#[cfg(windows)]
-async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
-    let spawn = super::elevate::spawn_elevated_windows(agent_resolver).await?;
-    let stream = tokio_duplex::Duplex::new(spawn.stdout, spawn.stdin);
-    Ok(ChildConnection {
-        child: AgentProcess::Win(spawn.process),
-        stream,
-        stderr: None,
-        _askpass: None,
-    })
-}
-
-/// Elevated mode is unsupported on this platform (e.g. macOS).
-#[cfg(not(any(target_os = "linux", windows)))]
-async fn spawn_elevated(_agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
-    Err(Error::Custom(
-        "elevated mode is not supported on this platform".into(),
-    ))
 }
 
 /// Spawn a background task that waits for the child to exit, then clears the
@@ -1315,7 +1242,9 @@ pub(super) async fn connect(
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
-            let conn = spawn_elevated(agent_resolver.as_ref()).await?;
+            let conn: ChildConnection = newt_common::elevation::spawn(agent_resolver.as_ref())
+                .await?
+                .into();
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),

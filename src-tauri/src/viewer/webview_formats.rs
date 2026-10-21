@@ -44,7 +44,7 @@ const AUDIO: &[&str] = &[
 const AUDIO_HERE: &[&str] = &["audio/aiff", "audio/x-aiff"];
 #[cfg(windows)]
 const AUDIO_HERE: &[&str] = &["audio/ogg"];
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
 const AUDIO_HERE: &[&str] = &["audio/aiff", "audio/x-aiff", "audio/ogg"];
 
 const VIDEO: &[&str] = &["video/mp4", "video/webm"];
@@ -53,7 +53,7 @@ const VIDEO: &[&str] = &["video/mp4", "video/webm"];
 const VIDEO_HERE: &[&str] = &["video/quicktime", "video/x-m4v"];
 #[cfg(windows)]
 const VIDEO_HERE: &[&str] = &[];
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
 const VIDEO_HERE: &[&str] = &["video/quicktime", "video/x-matroska", "video/ogg"];
 
 /// Whether Image mode can show an image of type `mime`.

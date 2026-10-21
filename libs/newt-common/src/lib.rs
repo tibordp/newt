@@ -4,6 +4,7 @@ pub mod askpass;
 pub mod batch_rename;
 pub mod connect;
 pub mod discovery;
+pub mod elevation;
 pub mod enrich;
 pub mod error;
 pub mod filesystem;
@@ -21,6 +22,8 @@ pub mod shell_control;
 pub mod spool;
 pub mod terminal;
 pub mod vfs;
+#[cfg(windows)]
+pub mod win_proc;
 
 #[cfg(test)]
 mod test_support;

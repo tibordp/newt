@@ -43,6 +43,12 @@ struct Args {
     #[arg(long, value_name = "NAME")]
     pipe: Option<String>,
 
+    /// Started by the macOS elevated transport (Authorization Services): finish
+    /// becoming root before anything else.
+    #[cfg(target_os = "macos")]
+    #[arg(long)]
+    macos_elevated: bool,
+
     /// Serve only the filesystem (VFS) API — used for pane-scoped agent mounts.
     #[arg(long)]
     serve_vfs: bool,
@@ -173,6 +179,16 @@ fn main() {
         std::process::exit(run_askpass(&sock_path));
     }
 
+    let args = Args::parse();
+
+    #[cfg(target_os = "macos")]
+    if args.macos_elevated
+        && let Err(e) = newt_common::elevation::macos::adopt()
+    {
+        eprintln!("failed to become root: {}", e);
+        std::process::exit(1);
+    }
+
     // Before the runtime spawns its workers — `set_var` is not thread-safe.
     // A Mac agent gets its locale here for the same reason the host does; a
     // Linux one already has one from pam_env and this is a no-op.
@@ -188,45 +204,13 @@ fn main() {
     }));
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    if let Err(e) = rt.block_on(run_agent()) {
+    if let Err(e) = rt.block_on(run_agent(args)) {
         eprintln!("agent error: {}", e);
         std::process::exit(1);
     }
 }
 
-/// Connect to the host's named pipe, retrying briefly while it's busy
-/// (ERROR_PIPE_BUSY = 231) — the host creates the server right before
-/// launching us, so a short race is expected.
-#[cfg(windows)]
-async fn connect_pipe(
-    name: &str,
-) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, Error> {
-    use std::time::Duration;
-    use tokio::net::windows::named_pipe::ClientOptions;
-
-    const ERROR_PIPE_BUSY: i32 = 231;
-    for _ in 0..200 {
-        match ClientOptions::new().open(name) {
-            Ok(client) => return Ok(client),
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(e) => {
-                return Err(Error::custom(format!(
-                    "failed to open named pipe {:?}: {}",
-                    name, e
-                )));
-            }
-        }
-    }
-    Err(Error::custom(format!(
-        "timed out connecting to named pipe {:?}",
-        name
-    )))
-}
-
-async fn run_agent() -> Result<(), Error> {
-    let args = Args::parse();
+async fn run_agent(args: Args) -> Result<(), Error> {
     if args.print_triple {
         println!("{}", env!("NEWT_TARGET_TRIPLE"));
         return Ok(());
@@ -245,7 +229,7 @@ async fn run_agent() -> Result<(), Error> {
     ) = match pipe {
         #[cfg(windows)]
         Some(name) => {
-            let client = connect_pipe(&name).await?;
+            let client = newt_common::elevation::windows::connect(&name).await?;
             let (r, w) = tokio::io::split(client);
             (Box::new(r), Box::new(w))
         }

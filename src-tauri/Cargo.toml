@@ -163,6 +163,5 @@ custom-protocol = ["tauri/custom-protocol"]
 # payload) even off their target OS, so `cargo xtask gen-bindings` emits a
 # host-independent `bindings.ts`. Never enabled for shipping builds.
 specta-bindings = []
-# Elevated sessions run a copy of the agent staged in $XDG_RUNTIME_DIR. For
-# the AppImage only: root can't see the user's FUSE mount it runs from.
-elevate-agent-copy = []
+# See newt-common's feature of the same name.
+elevate-agent-copy = ["newt-common/elevate-agent-copy"]
