@@ -66,6 +66,10 @@ Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
 - `.img` support via content sniffing: the extension is ambiguous (raw disk images with partition tables vs raw ISO9660/UDF), so claiming it needs a cheap probe before mount rather than an extension match.
 - El Torito boot catalog: expose boot images as synthetic entries at the mount root.
 
+## Operations
+
+- **Keep both** as an answer to file and folder conflicts in every operation (copy, move, rename, unpack, and restoring from the Trash once it exists): the incoming item lands beside the existing one under a numbered name. Offered with the existing answers, in apply-to-all, and among the copy dialog's up-front conflict resolutions; the numbering scheme (`name 2.ext` as Finder, `name (2).ext` as Explorer) is undecided.
+
 ## Exclusive writes
 
 Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
@@ -114,5 +118,6 @@ Correctness and UX:
 ## Major new features (groom/write design docs first)
 
 - Reveal in Newt / New Newt Window Here from Finder, Explorer, Nautilus, Dolphin; single instance (`design_docs/DESIGN_FILE_MANAGER_INTEGRATION.md`)
+- Trash VFS: browse, restore and empty the trash wherever there is one — freedesktop, Recycle Bin, macOS — including remote sessions, where nothing else can (`design_docs/DESIGN_TRASH_VFS.md`)
 - Compare & synchronize directories
 - Custom styling / theming
