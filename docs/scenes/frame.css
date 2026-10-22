@@ -121,9 +121,9 @@ body {
   background: #34c759;
 }
 
+/* The app draws the title itself, on its strip. */
 .macos .title {
-  margin-left: 16px;
-  font-weight: 700;
+  display: none;
 }
 
 /* Windows 11: Mica title bar, the title leading, caption buttons

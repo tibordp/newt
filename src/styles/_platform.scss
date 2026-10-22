@@ -83,6 +83,9 @@
   --font-size-title: var(--font-size-base);
   --font-weight-title: 700;
 
+  --color-titlebar-fg: #595959;
+  --color-titlebar-fg-backdrop: #b2b2b2;
+
   --color-menu-bg: rgba(246, 246, 246, 0.94);
   --menu-backdrop: blur(24px) saturate(1.8);
   --radius-menu: 12px;
@@ -126,6 +129,9 @@
     --shadow-dialog:
       0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
 
+    --color-titlebar-fg: #a6a6a6;
+    --color-titlebar-fg-backdrop: #616161;
+
     --color-menu-bg: rgba(42, 42, 42, 0.94);
   }
 }
@@ -133,8 +139,8 @@
 // Windows 11: Segoe UI at 9pt and Fluent throughout — Mica behind the
 // chrome (the title bar's own, running on into the pane headers and bars),
 // elevation edges on controls, an accent underline under a focused field,
-// a tinted list selection with the accent pill, Windows Terminal's tabs,
-// thin rounded scroll bars, and dialogs whose buttons share a footer band.
+// Windows Terminal's tabs, thin rounded scroll bars, and dialogs whose
+// buttons share a footer band.
 :root[data-platform="windows"] {
   --font-ui:
     var(--font-system, "Segoe UI Variable Text"), "Segoe UI Variable Text",
@@ -161,19 +167,17 @@
   --color-highlight-bg: rgba(0, 0, 0, 0.06);
   --color-highlight-fg: var(--color-fg);
   --color-selected-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  --color-cursor-fg: var(--color-fg);
-  --color-cursor-name: initial;
-  --color-cursor-icon: initial;
-  --cursor-pill-width: 3px;
+  // The accent's own colour rather than Fluent's darker fill shade.
+  --color-cursor-bg: var(--system-accent, #0078d4);
+  --color-cursor-fg: #ffffff;
   --color-cursor-inactive: rgba(0, 0, 0, 0.05);
 
   --color-destructive: #c42b1c;
   --color-destructive-text: #c42b1c;
 
   --radius-row: 4px;
-  --row-inset: 4px;
-  --row-padding-start: 10px;
+  --row-inset: 2px;
+  --row-padding-start: 4px;
 
   --control-height: 28px;
   --control-padding-x: 12px;
@@ -238,7 +242,6 @@
       var(--color-accent) 14%,
       transparent
     );
-    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 22%, transparent);
     --color-cursor-inactive: rgba(255, 255, 255, 0.06);
 
     --color-destructive: #c42b1c;
@@ -294,8 +297,8 @@
 // GNOME (libadwaita): a header bar Newt draws itself, running on into the
 // pane headers, which turns to the window colour with the window in the
 // background; flat borderless buttons and fields on a translucent fill,
-// inner focus rings, rounded list rows with an accent tint, pill tabs, and
-// floating dialogs whose buttons share the bottom edge.
+// inner focus rings, pill tabs, and floating dialogs whose buttons share
+// the bottom edge.
 :root[data-platform="gnome"] {
   --font-ui:
     var(--font-system, "Adwaita Sans"), "Adwaita Sans", Cantarell, system-ui,
@@ -321,20 +324,14 @@
   --color-highlight-bg: rgba(0, 0, 6, 0.08);
   --color-highlight-fg: var(--color-fg);
   --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 25%, transparent);
-  --color-cursor-fg: var(--color-fg);
-  --color-cursor-name: initial;
-  --color-cursor-icon: initial;
-  --cursor-ring: inset 0 0 0 2px
-    color-mix(in srgb, var(--color-accent) 50%, transparent);
   --color-cursor-inactive: rgba(0, 0, 6, 0.06);
 
   --color-destructive: #e01b24;
   --color-destructive-text: #c30000;
 
   --radius-row: 6px;
-  --row-inset: 6px;
-  --row-padding-start: 8px;
+  --row-inset: 4px;
+  --row-padding-start: 6px;
 
   --control-height: 34px;
   --control-padding-x: 12px;
@@ -419,7 +416,6 @@
       var(--color-accent) 20%,
       transparent
     );
-    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 32%, transparent);
     --color-cursor-inactive: rgba(255, 255, 255, 0.07);
 
     --color-destructive: #c01c28;
@@ -446,8 +442,7 @@
 // kdeglobals) with Breeze's colours where it sets none: pane headers in the
 // scheme's header colour, so KWin's title bar runs on into them; framed
 // buttons whose edge lights up in the accent on hover, a tinted default
-// button, an accent frame around a focused field, and list rows tinted
-// with an accent frame for the cursor.
+// button, and an accent frame around a focused field.
 :root[data-platform="kde"] {
   --font-ui:
     var(--font-system, "Noto Sans"), "Noto Sans", system-ui, sans-serif;
@@ -475,11 +470,8 @@
   );
   --color-highlight-fg: var(--color-fg);
   --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 24%, transparent);
-  --color-cursor-fg: var(--color-fg);
-  --color-cursor-name: initial;
-  --color-cursor-icon: initial;
-  --cursor-ring: inset 0 0 0 1px var(--color-accent);
+  // Breeze's light accent, a shade darker so white text reads on it.
+  --color-cursor-bg: color-mix(in srgb, var(--color-accent), black 20%);
   --color-cursor-inactive: rgba(35, 38, 41, 0.07);
 
   --color-destructive: #da4453;
@@ -572,7 +564,6 @@
       var(--color-accent) 18%,
       transparent
     );
-    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 30%, transparent);
     --color-cursor-inactive: rgba(252, 252, 252, 0.08);
 
     --color-destructive-text: #ed6a75;

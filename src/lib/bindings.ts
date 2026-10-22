@@ -4525,6 +4525,11 @@ font_points: number | null;
  */
 titlebar_height: number | null; 
 /**
+ * The title sits after the window buttons rather than centred
+ * (macOS 26).
+ */
+title_leading: boolean; 
+/**
  * The window buttons of the header bar Newt draws itself.
  */
 window_buttons: WindowButtons | null; color_scheme: ColorScheme | null; 

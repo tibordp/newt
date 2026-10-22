@@ -152,22 +152,17 @@
     background: var(--color-cursor-inactive);
   }
 
-  // The file list's cursor (see `--color-cursor-name`).
   .list:focus &.cursor {
     color: var(--color-cursor-fg);
 
     &::before {
       background: var(--color-cursor-bg);
-      box-shadow: var(--cursor-ring);
     }
 
-    :global(.file-icon) {
-      color: var(--color-cursor-icon, var(--icon-color));
-    }
-
+    :global(.file-icon),
     .problem,
     .folder {
-      color: var(--color-cursor-name, var(--own-color, currentColor));
+      color: var(--color-cursor-fg);
     }
   }
 }
@@ -197,8 +192,7 @@
 }
 
 .folder {
-  --own-color: var(--color-fg-muted);
-  color: var(--own-color);
+  color: var(--color-fg-muted);
 }
 
 .problem {
@@ -210,13 +204,11 @@
 }
 
 .rowError .problem {
-  --own-color: var(--color-error);
-  color: var(--own-color);
+  color: var(--color-error);
 }
 
 .rowWarning .problem {
-  --own-color: var(--color-warning);
-  color: var(--own-color);
+  color: var(--color-warning);
 }
 
 .empty {

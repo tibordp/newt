@@ -74,6 +74,7 @@ function fallback(): SystemAppearance {
     font_family: null,
     font_points: null,
     titlebar_height: null,
+    title_leading: false,
     window_buttons: null,
     color_scheme: null,
     mica: false,

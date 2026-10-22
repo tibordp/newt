@@ -119,6 +119,7 @@ const appearance: SystemAppearance = {
   font_family: null,
   font_points: null,
   titlebar_height: platform === "macos" ? 32 : null,
+  title_leading: platform === "macos",
   window_buttons: platform === "gnome" ? { start: [], end: ["close"] } : null,
   color_scheme: platform === "kde" ? BREEZE[dark ? "dark" : "light"] : null,
   mica: platform === "windows",

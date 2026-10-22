@@ -64,6 +64,9 @@ pub struct SystemAppearance {
     pub font_points: Option<f64>,
     /// The title bar the window's content is drawn under, in CSS pixels.
     pub titlebar_height: Option<f64>,
+    /// The title sits after the window buttons rather than centred
+    /// (macOS 26).
+    pub title_leading: bool,
     /// The window buttons of the header bar Newt draws itself.
     pub window_buttons: Option<WindowButtons>,
     pub color_scheme: Option<ColorScheme>,
@@ -87,8 +90,12 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, M>,
 ) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, M> {
     let builder = builder.initialization_script(initialization_script());
+    // The page draws the title, in the strip that moves the window: macOS's
+    // own sits in a view above the page, which doesn't.
     #[cfg(target_os = "macos")]
-    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     #[cfg(windows)]
     let builder = if platform::mica() {
         builder
@@ -171,7 +178,7 @@ mod platform {
 
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSColor, NSColorSpace, NSWindow, NSWindowStyleMask};
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSPoint, NSProcessInfo, NSRect, NSSize};
 
     use super::{PlatformStyle, SystemAppearance, hex};
 
@@ -195,6 +202,10 @@ mod platform {
             font_family: None,
             font_points: None,
             titlebar_height: TITLEBAR_HEIGHT.get().copied(),
+            title_leading: NSProcessInfo::processInfo()
+                .operatingSystemVersion()
+                .majorVersion
+                >= 26,
             window_buttons: None,
             color_scheme: None,
             mica: false,
@@ -225,6 +236,7 @@ mod platform {
             font_family: None,
             font_points: None,
             titlebar_height: None,
+            title_leading: false,
             window_buttons: None,
             color_scheme: None,
             mica: mica(),
@@ -341,6 +353,7 @@ mod platform {
                 font_family: font.as_ref().map(|f| f.0.clone()),
                 font_points: font.map(|f| f.1),
                 titlebar_height: None,
+                title_leading: false,
                 window_buttons: Some(buttons),
                 color_scheme: None,
                 mica: false,
@@ -354,6 +367,7 @@ mod platform {
                 font_family: globals.font.as_ref().map(|f| f.0.clone()),
                 font_points: globals.font.map(|f| f.1),
                 titlebar_height: None,
+                title_leading: false,
                 window_buttons: None,
                 color_scheme: globals.scheme,
                 mica: false,

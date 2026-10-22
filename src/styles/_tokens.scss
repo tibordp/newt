@@ -36,17 +36,10 @@
   --color-selected-bg: color-mix(in srgb, var(--color-accent) 22%, transparent);
   --color-selected-fg: var(--color-accent-text);
 
-  // The file list's cursor in the pane that has the keyboard. On a fill,
-  // the row's name and icon take `--color-cursor-name` and
-  // `--color-cursor-icon`; a platform whose cursor is a tint sets those
-  // `initial`, and the row keeps its own colours.
-  --color-cursor-bg: var(--color-highlight-bg);
-  --color-cursor-fg: var(--color-highlight-fg);
-  --color-cursor-name: var(--color-highlight-fg);
-  --color-cursor-icon: var(--color-highlight-fg);
-  --cursor-ring: none;
-  // A bar at the row's leading edge, as wide as this.
-  --cursor-pill-width: 0px;
+  // The file list's cursor in the pane that has the keyboard: a fill on
+  // every platform, so it reads apart from marked rows at a glance.
+  --color-cursor-bg: var(--color-accent);
+  --color-cursor-fg: var(--color-accent-fg);
 
   // File list while a filter is hiding rows.
   --color-bg-filtered: var(--_bg-filtered);
@@ -158,6 +151,8 @@
   --titlebar-height: 0px;
   --color-titlebar: var(--color-chrome-light);
   --color-titlebar-backdrop: var(--color-titlebar);
+  --color-titlebar-fg: var(--color-fg);
+  --color-titlebar-fg-backdrop: var(--color-fg-muted);
 
   // Behind the content: the chrome is see-through where the window is
   // (Mica), and content areas paint `--color-bg` themselves.

@@ -16,11 +16,13 @@ import { Shortcut, useCommands } from "../main_window/ContextMenu";
 import menuStyles from "../main_window/Menu.module.scss";
 import styles from "./TitleBar.module.scss";
 
-/// The window's title as the header bar shows it. The webview sets the main
-/// window's and the editor's through `setWindowTitle`; Rust titles a viewer
-/// as it shows it, which gives the window focus, when the header bar reads
-/// it back.
+/// The window's title as the title bar shows it. The webview sets the main
+/// window's and the editor's through `setWindowTitle`, and then never reads
+/// the window's back: a read can resolve after a newer title was set. Rust
+/// titles a viewer as it shows it, which gives the window focus, when the
+/// title bar reads it.
 let title: string | null = null;
+let titledByPage = false;
 const titleListeners = new Set<() => void>();
 
 function publishTitle(next: string) {
@@ -30,6 +32,7 @@ function publishTitle(next: string) {
 }
 
 export function setWindowTitle(next: string) {
+  titledByPage = true;
   publishTitle(next);
   safeSilent(commands.setWindowTitle(next));
 }
@@ -44,12 +47,12 @@ function useWindowTitle(): string | null {
   );
   useEffect(() => {
     const win = getCurrentWindow();
-    const read = () => win.title().then(publishTitle, () => {});
-    // The window's first title, unless the webview has set one already.
-    win.title().then(
-      (t) => title === null && publishTitle(t),
-      () => {},
-    );
+    const read = () =>
+      win.title().then(
+        (t) => titledByPage || publishTitle(t),
+        () => {},
+      );
+    read();
     window.addEventListener("focus", read);
     return () => window.removeEventListener("focus", read);
   }, []);
@@ -77,13 +80,13 @@ function useCommandRunner(): CommandRunner | null {
   );
 }
 
-/// The window's own title bar, where Newt draws one. macOS draws the title
-/// and traffic lights over the top of the page, on the strip this leaves
-/// for them; on GNOME this is the whole header bar, GTK keeping only the
+/// The window's own title bar, where Newt draws one. macOS draws the
+/// traffic lights over the top of the page, on the strip this leaves for
+/// them; on GNOME this is the whole header bar, GTK keeping only the
 /// window's frame. Window chrome is the one place a component follows the
 /// platform: Windows and KDE draw their own title bars.
 export function TitleBar() {
-  const { platform, window_buttons } = useAppearance();
+  const { platform, window_buttons, title_leading } = useAppearance();
   const fullscreen = useFullscreen();
   const drawn = platform === "macos" || platform === "gnome";
 
@@ -102,7 +105,24 @@ export function TitleBar() {
   if (platform === "gnome") {
     return <HeaderBar buttons={window_buttons ?? { start: [], end: [] }} />;
   }
-  return <div className={styles.titleBar} data-tauri-drag-region />;
+  return <MacTitleBar leading={title_leading} />;
+}
+
+/// macOS's own title sits in a view above the page, which doesn't move the
+/// window; the page draws it on its strip instead — after the traffic
+/// lights on macOS 26, centred before.
+function MacTitleBar({ leading }: { leading: boolean }) {
+  const title = useWindowTitle();
+  return (
+    <div className={styles.titleBar} data-tauri-drag-region>
+      <span
+        className={leading ? styles.macTitleLeading : styles.macTitle}
+        data-tauri-drag-region
+      >
+        {title}
+      </span>
+    </div>
+  );
 }
 
 function HeaderBar({ buttons }: { buttons: WindowButtons }) {
