@@ -1707,22 +1707,24 @@ export function DissectViewer({
                 >
                   Go to Offset… {shortcut("viewer_goto")}
                 </CM.Item>
-                <CM.Separator className={menuStyles.separator} />
                 {!host.embedded && (
-                  <CM.Item
-                    className={menuStyles.item}
-                    disabled={!menuContent || menuContent === "pending"}
-                    onSelect={() => {
-                      if (menuContent && menuContent !== "pending") {
-                        showDissectAs(menuContent);
-                      }
-                    }}
-                  >
-                    {menuContent && menuContent !== "pending"
-                      ? `Dissect “${menuContent.name}” As…`
-                      : "Dissect As…"}{" "}
-                    {shortcut("viewer_dissect_as")}
-                  </CM.Item>
+                  <>
+                    <CM.Separator className={menuStyles.separator} />
+                    <CM.Item
+                      className={menuStyles.item}
+                      disabled={!menuContent || menuContent === "pending"}
+                      onSelect={() => {
+                        if (menuContent && menuContent !== "pending") {
+                          showDissectAs(menuContent);
+                        }
+                      }}
+                    >
+                      {menuContent && menuContent !== "pending"
+                        ? `Dissect “${menuContent.name}” As…`
+                        : "Dissect As…"}{" "}
+                      {shortcut("viewer_dissect_as")}
+                    </CM.Item>
+                  </>
                 )}
                 <CM.Separator className={menuStyles.separator} />
                 <CM.CheckboxItem

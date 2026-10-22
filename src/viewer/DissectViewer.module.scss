@@ -8,6 +8,8 @@
   flex: 1;
   display: flex;
   min-height: 0;
+  // The window is see-through behind the viewer (Mica on Windows).
+  background: var(--color-bg);
 }
 
 // --- The tree ---
