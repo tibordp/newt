@@ -119,15 +119,17 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     builder
 }
 
-/// Finishes a window built with [`window_chrome`]: on GNOME, GTK keeps the
-/// window's frame — shadow, rounded corners, resize edges — but draws no
+/// Finishes a window built with [`window_chrome`]: tells the page whenever
+/// the window becomes active or stops being so, and on GNOME has GTK keep
+/// the window's frame — shadow, rounded corners, resize edges — but draw no
 /// title bar, Newt's header bar standing in for it. Shows the window if
-/// `visible`.
+/// `visible` where [`window_chrome`] hid it.
 pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
-    #[cfg(target_os = "linux")]
-    if platform::is_gnome() {
-        let target = window.clone();
-        let result = window.run_on_main_thread(move || {
+    let target = window.clone();
+    let result = window.run_on_main_thread(move || {
+        platform::watch_activation(&target);
+        #[cfg(target_os = "linux")]
+        if platform::is_gnome() {
             match target.gtk_window() {
                 Ok(gtk_window) => platform::frame_only(&gtk_window, &target),
                 Err(e) => log::warn!("no GTK window for the header bar: {e}"),
@@ -136,13 +138,28 @@ pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
                 let _ = target.show();
                 let _ = target.set_focus();
             }
-        });
-        if let Err(e) = result {
-            log::warn!("could not set up the header bar: {e}");
         }
-        return;
+    });
+    if let Err(e) = result {
+        log::warn!("could not finish the window: {e}");
     }
-    let _ = (window, visible);
+    let _ = visible;
+}
+
+/// The page marks itself inactive (`data-window-inactive`) by the window
+/// manager's account of which window is active, not by its own focus: a
+/// window move's pointer grab, a native menu or WebView2's child window can
+/// take the page's focus while the window stays active.
+fn set_active(window: &tauri::WebviewWindow, active: bool) {
+    let _ = window.eval(format!("window.__NEWT_SET_ACTIVE__?.({active})"));
+}
+
+/// Whether the window is the active one, for a page that has only just
+/// loaded and so missed being told.
+#[tauri::command]
+#[specta::specta]
+pub fn is_window_active(webview_window: tauri::WebviewWindow) -> bool {
+    platform::is_active(&webview_window)
 }
 
 /// Whether Newt draws the window's title bar as a header bar (GNOME), whose
@@ -202,6 +219,25 @@ mod platform {
 
     static TITLEBAR_HEIGHT: OnceLock<f64> = OnceLock::new();
 
+    /// The key window is the active one.
+    pub(super) fn watch_activation(window: &tauri::WebviewWindow) {
+        use tauri::Manager;
+
+        let app_handle = window.app_handle().clone();
+        let label = window.label().to_owned();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(active) = event
+                && let Some(window) = app_handle.get_webview_window(&label)
+            {
+                super::set_active(&window, *active);
+            }
+        });
+    }
+
+    pub(super) fn is_active(window: &tauri::WebviewWindow) -> bool {
+        window.is_focused().unwrap_or(true)
+    }
+
     pub(super) fn init() {
         let mtm = MainThreadMarker::new().expect("appearance::init runs on the main thread");
         let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(100.0, 100.0));
@@ -234,8 +270,65 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use windows::UI::ViewManagement::{UIColorType, UISettings};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, WA_INACTIVE, WM_ACTIVATE, WM_NCDESTROY,
+    };
 
     use super::{PlatformStyle, SystemAppearance, hex};
+
+    const ACTIVATION_SUBCLASS: usize = 0x4e41_4354;
+
+    /// Activation rather than tao's `Focused`, which follows the keyboard
+    /// focus of the top-level window and so goes false whenever WebView2's
+    /// child window takes it.
+    pub(super) fn watch_activation(window: &tauri::WebviewWindow) {
+        let Ok(hwnd) = window.hwnd() else {
+            return;
+        };
+        let hwnd = HWND(hwnd.0);
+        let target = Box::into_raw(Box::new(window.clone()));
+        // SAFETY: on the window's own thread; the subclass frees `target`
+        // as the window goes.
+        unsafe {
+            let _ = SetWindowSubclass(
+                hwnd,
+                Some(activation_proc),
+                ACTIVATION_SUBCLASS,
+                target as usize,
+            );
+        }
+    }
+
+    unsafe extern "system" fn activation_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        refdata: usize,
+    ) -> LRESULT {
+        match msg {
+            WM_ACTIVATE => {
+                // SAFETY: refdata is the boxed window, alive until WM_NCDESTROY.
+                let window = unsafe { &*(refdata as *const tauri::WebviewWindow) };
+                super::set_active(window, (wparam.0 & 0xffff) as u32 != WA_INACTIVE);
+            }
+            WM_NCDESTROY => unsafe {
+                let _ = RemoveWindowSubclass(hwnd, Some(activation_proc), ACTIVATION_SUBCLASS);
+                drop(Box::from_raw(refdata as *mut tauri::WebviewWindow));
+            },
+            _ => {}
+        }
+        unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+    }
+
+    pub(super) fn is_active(window: &tauri::WebviewWindow) -> bool {
+        window
+            .hwnd()
+            .is_ok_and(|hwnd| unsafe { GetForegroundWindow() }.0 == hwnd.0)
+    }
 
     /// Mica arrived with Windows 11; earlier, a transparent window would
     /// show the desktop through its chrome.
@@ -388,6 +481,38 @@ mod platform {
             (*raw).y = y;
         }
         toplevel.show_window_menu(&mut press);
+    }
+
+    /// GDK's `FOCUSED`: the window manager's active window, which GTK's
+    /// own backdrop style follows.
+    pub(super) fn watch_activation(window: &tauri::WebviewWindow) {
+        use gtk::gdk::WindowState;
+        use gtk::glib::Propagation;
+        use gtk::prelude::WidgetExt;
+
+        let Ok(gtk_window) = window.gtk_window() else {
+            return;
+        };
+        let target = window.clone();
+        gtk_window.connect_window_state_event(move |_, event| {
+            if event.changed_mask().contains(WindowState::FOCUSED) {
+                super::set_active(
+                    &target,
+                    event.new_window_state().contains(WindowState::FOCUSED),
+                );
+            }
+            Propagation::Proceed
+        });
+    }
+
+    pub(super) fn is_active(window: &tauri::WebviewWindow) -> bool {
+        use gtk::prelude::WidgetExt;
+
+        window
+            .gtk_window()
+            .ok()
+            .and_then(|w| w.window())
+            .is_none_or(|w| w.state().contains(gtk::gdk::WindowState::FOCUSED))
     }
 
     /// The page's background (`--color-bg` on GNOME), light and dark.

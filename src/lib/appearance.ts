@@ -1,7 +1,8 @@
 /// The platform look the token layer (`_platform.scss`) follows: the design
 /// language as `data-platform` on the root, the system accent, UI font and
-/// KDE colour scheme as custom properties, Mica as `data-backdrop`. Rust
-/// hands every window the current values before its first paint
+/// KDE colour scheme as custom properties, Mica as `data-backdrop`, and
+/// `data-window-inactive` while another window is active. Rust hands every
+/// window the current values before its first paint
 /// (`window.__NEWT_APPEARANCE__`); a window asks again whenever it regains
 /// focus, which is when a change made in the system settings shows.
 
@@ -16,6 +17,8 @@ import {
 declare global {
   interface Window {
     __NEWT_APPEARANCE__?: SystemAppearance;
+    /// Rust calls it as the window becomes active or stops being so.
+    __NEWT_SET_ACTIVE__?: (active: boolean) => void;
   }
 }
 
@@ -142,18 +145,24 @@ function update(next: SystemAppearance) {
 export function initAppearance() {
   apply();
   darkQuery.addEventListener("change", apply);
-  // While another window has the keyboard, focus marks (the cursor, the
-  // active pane's dot, the terminal tab's line) turn grey, and so does
-  // GNOME's header bar.
+  // While another window is active, focus marks (the cursor, the active
+  // pane's dot, the terminal tab's line) turn grey, and so does GNOME's
+  // header bar.
   const root = document.documentElement;
-  const focusChanged = () => {
-    if (document.hasFocus()) delete root.dataset.windowInactive;
-    else root.dataset.windowInactive = "";
+  let told = false;
+  const setActive = (active: boolean) =>
+    root.toggleAttribute("data-window-inactive", !active);
+  window.__NEWT_SET_ACTIVE__ = (active) => {
+    told = true;
+    setActive(active);
   };
-  focusChanged();
-  window.addEventListener("blur", focusChanged);
+  commands.isWindowActive().then(
+    (active) => {
+      if (!told) setActive(active);
+    },
+    () => {},
+  );
   window.addEventListener("focus", () => {
-    focusChanged();
     commands.getSystemAppearance().then(update, () => {});
   });
 }

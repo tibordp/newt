@@ -241,6 +241,7 @@ const handlers: Record<string, (args: any) => unknown> = {
   get_preferences: () => preferences,
   get_runtime_state: () => runtimeState,
   get_system_appearance: () => appearance,
+  is_window_active: () => true,
   "plugin:window|is_fullscreen": () => false,
   "plugin:window|is_maximized": () => false,
   "plugin:window|title": () => windowTitle,

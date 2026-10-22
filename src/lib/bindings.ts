@@ -136,6 +136,13 @@ async showWindowMenu() : Promise<void> {
     await TAURI_INVOKE("show_window_menu");
 },
 /**
+ * Whether the window is the active one, for a page that has only just
+ * loaded and so missed being told.
+ */
+async isWindowActive() : Promise<boolean> {
+    return await TAURI_INVOKE("is_window_active");
+},
+/**
  * The window's menu, for its header bar; `None` if it has none.
  */
 async getWindowMenu() : Promise<MenuEntry[] | null> {
