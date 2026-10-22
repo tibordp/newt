@@ -243,6 +243,26 @@ const handlers: Record<string, (args: any) => unknown> = {
   "plugin:window|is_fullscreen": () => false,
   "plugin:window|is_maximized": () => false,
   "plugin:window|title": () => windowTitle,
+  // Its File menu stands in for a viewer's or editor's whole menu.
+  get_window_menu: () =>
+    scene.window === "main"
+      ? null
+      : [
+          {
+            kind: "submenu",
+            label: "File",
+            enabled: true,
+            items: [
+              {
+                kind: "item",
+                id: "close",
+                label: "Close",
+                enabled: true,
+                checked: null,
+              },
+            ],
+          },
+        ],
   file_info: ({ path }: { path: VfsPath }) => infoOf(path),
   inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
     const { mime, viewerMode } = fixture(path);

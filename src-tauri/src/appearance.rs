@@ -138,6 +138,16 @@ pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
     let _ = (window, visible);
 }
 
+/// Whether Newt draws the window's title bar as a header bar (GNOME), whose
+/// primary menu stands in for a viewer's or editor's menu bar.
+pub(crate) fn draws_header_bar() -> bool {
+    #[cfg(target_os = "linux")]
+    let gnome = platform::is_gnome();
+    #[cfg(not(target_os = "linux"))]
+    let gnome = false;
+    gnome
+}
+
 /// Records what can only be read on the main thread; called from `setup`.
 pub(crate) fn init() {
     #[cfg(target_os = "macos")]

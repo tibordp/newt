@@ -163,7 +163,7 @@ pub fn create_editor_window(window: &WebviewWindow) -> Arc<EditorWindow> {
 pub fn activate_editor_window(
     app_handle: &tauri::AppHandle,
     label: &str,
-    #[cfg_attr(target_os = "macos", allow(unused_variables))] window: &WebviewWindow,
+    window: &WebviewWindow,
     editor: &Arc<EditorWindow>,
 ) -> Result<(), Error> {
     let prefix = format!("editor_{}_", label);
@@ -178,18 +178,16 @@ pub fn activate_editor_window(
         let _ = app_handle.set_menu(menu.clone());
     }
     #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window.set_menu(menu.clone());
-    }
+    crate::window_menu::set_menu(window, menu.clone());
 
     *editor.menu.write() = Some(menu);
 
     // Register menu event handler — IDs are prefixed with the window label
     // so each handler only reacts to its own window's menu items.
     let editor_weak = Arc::downgrade(editor);
-    app_handle.on_menu_event(move |_app_handle, event| {
-        let id = event.id().0.as_str();
-
+    #[cfg(target_os = "macos")]
+    let app = app_handle.clone();
+    let handler: crate::window_menu::Handler = Arc::new(move |id: &str| {
         // Only handle events with our prefix
         if !id.starts_with(prefix.as_str()) {
             return;
@@ -197,8 +195,8 @@ pub fn activate_editor_window(
 
         #[cfg(target_os = "macos")]
         if id == format!("{}quit", prefix) {
-            let global_ctx: State<GlobalContext> = _app_handle.state();
-            global_ctx.quit(_app_handle);
+            let global_ctx: State<GlobalContext> = app.state();
+            global_ctx.quit(&app);
             return;
         }
 
@@ -231,6 +229,11 @@ pub fn activate_editor_window(
             editor.set_language(lang);
         }
     });
+    app_handle.on_menu_event({
+        let handler = handler.clone();
+        move |_, event| handler(event.id().0.as_str())
+    });
+    crate::window_menu::set_handler(window, handler);
 
     Ok(())
 }

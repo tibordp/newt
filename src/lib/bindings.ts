@@ -128,6 +128,15 @@ async zoom(factor: number) : Promise<Result<null, string>> {
 async getSystemAppearance() : Promise<SystemAppearance> {
     return await TAURI_INVOKE("get_system_appearance");
 },
+/**
+ * The window's menu, for its header bar; `None` if it has none.
+ */
+async getWindowMenu() : Promise<MenuEntry[] | null> {
+    return await TAURI_INVOKE("get_window_menu");
+},
+async activateWindowMenuItem(id: string) : Promise<void> {
+    await TAURI_INVOKE("activate_window_menu_item", { id });
+},
 async cancel(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel", { paneHandle }) };
@@ -3414,6 +3423,7 @@ export type MainWindowState = { connection_status: ConnectionStatusWire; askpass
  * A node of a rendered document.
  */
 export type MarkdownNode = string | { tag: string; attrs: ([string, string])[]; children: MarkdownNode[] }
+export type MenuEntry = { kind: "item"; id: string; label: string; enabled: boolean; checked: boolean | null } | { kind: "submenu"; label: string; enabled: boolean; items: MenuEntry[] } | { kind: "separator" }
 /**
  * Which optional per-entry metadata families a VFS actually populates
  * on its `File`s — drives which file-list columns a pane offers (see

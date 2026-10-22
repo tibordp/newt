@@ -75,9 +75,9 @@ Newt takes on the design language of the system it runs on: macOS, Windows 11, G
 - **Dialogs and menus**: macOS sheets have no footer band; Windows dialogs put their buttons on a footer band, sharing its width, as do GNOME's floating dialogs (without the band); KDE separates the footer with a line.
 - **Terminal tabs**: Windows Terminal's, rounded at the top, on Windows; libadwaita's rounded pills on GNOME. The terminal takes the page's background and text colour on every platform.
 - **macOS title bar**: unified with the window — the title and the window buttons sit on a strip in the pane headers' colour, which moves the window and zooms it on a double-click. It goes away in full screen.
-- **GNOME header bar**: Newt draws its own, GTK keeping only the window's frame — rounded corners, the shadow, the resize edges. It carries the window's title, the window buttons in GNOME's `button-layout` (`org.gnome.desktop.wm.preferences`; by default only Close), and in a main window the primary menu (New Window, Connect to Remote Host, Command Palette, Settings, Newt Documentation, About Newt). It runs on into the pane headers, and like GNOME's own header bars turns to the window colour while another window has the keyboard. Dragging it moves the window, a double-click maximizes it; it goes away in full screen. Unlike GTK's title bar, its title follows the window's folder on Wayland too.
+- **GNOME header bar**: Newt draws its own, GTK keeping only the window's frame — rounded corners, the shadow, the resize edges. It carries the window's title, the window buttons in GNOME's `button-layout` (`org.gnome.desktop.wm.preferences`; by default only Close), and the primary menu: in a main window New Window, Connect to Remote Host, Command Palette, Settings, Newt Documentation and About Newt; in a viewer or editor window, the menu other platforms show as its menu bar. It runs on into the pane headers, and like GNOME's own header bars turns to the window colour while another window has the keyboard. Dragging it moves the window, a double-click maximizes it; it goes away in full screen. Unlike GTK's title bar, its title follows the window's folder on Wayland too.
 - **Windows Mica**: on Windows 11, the system's Mica backdrop shows through the title bar and on through the pane headers, status bars, terminal tab bar and function key bar; file lists, the terminal and dialogs stay opaque. Windows 10 keeps solid chrome.
-- Viewer and editor windows have the macOS strip and GNOME header bar too (without the primary menu), and Mica on Windows.
+- Viewer and editor windows have the macOS strip, the GNOME header bar and Mica on Windows too.
 
 ### Locale
 
@@ -1028,6 +1028,8 @@ The preview is for the mouse; the keyboard stays with the file list. It doesn't 
 
 ### Viewer Menu Bar
 
+On GNOME the menu is the header bar's primary menu (☰) instead, each menu below a section of it and nested menus submenus.
+
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Close (Escape, or Mod+W — the rebindable `viewer_close` command)
 - **Edit** (Text, Hex, Table and Structure modes): Copy, Select All, separator, Go to Line/Offset (Go to Row in Table mode)
@@ -1133,6 +1135,8 @@ The language comes from [file associations](#file-associations); the built-in on
 - **Close without unsaved changes**: Window closes immediately.
 
 ### Editor Menu Bar
+
+On GNOME the menu is the header bar's primary menu (☰) instead, as for the viewer.
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Save, Close (Cmd/Ctrl+W, fixed — not a rebindable command). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.

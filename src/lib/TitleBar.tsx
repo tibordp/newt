@@ -1,11 +1,17 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import type { WindowButton, WindowButtons } from "./bindings";
+import type { MenuEntry, WindowButton, WindowButtons } from "./bindings";
 import { commands } from "./bindings";
 import { safeSilent } from "./ipc";
 import { setFullscreen, useAppearance, useFullscreen } from "./appearance";
-import { DropdownMenu as DM } from "./menus";
+import { DropdownMenu as DM, refocusOwner } from "./menus";
 import { Shortcut, useCommands } from "../main_window/ContextMenu";
 import menuStyles from "../main_window/Menu.module.scss";
 import styles from "./TitleBar.module.scss";
@@ -120,7 +126,7 @@ function HeaderBar({ buttons }: { buttons: WindowButtons }) {
         {title}
       </div>
       <div className={styles.end} data-tauri-drag-region>
-        {run && <PrimaryMenu run={run} />}
+        {run ? <PrimaryMenu run={run} /> : <WindowMenu />}
         {buttons.end.map((b) => (
           <WindowControl key={b} kind={b} maximized={maximized} />
         ))}
@@ -141,6 +147,28 @@ function useMaximized(): boolean {
     };
   }, []);
   return maximized;
+}
+
+/// The element the last press landed on. A press on the header bar starts
+/// a window move, whose pointer grab swallows the release, so WebKit still
+/// holds the button down: the next press makes no pointerdown, and only its
+/// release arrives. A header bar button released while the header bar holds
+/// the last press acts on the release instead.
+let lastPress: Element | null = null;
+window.addEventListener(
+  "pointerdown",
+  (e) => {
+    lastPress = e.target instanceof Element ? e.target : null;
+  },
+  true,
+);
+
+function releasedAfterMove(e: React.PointerEvent): boolean {
+  return (
+    e.button === 0 &&
+    !!lastPress?.closest("[data-tauri-drag-region]") &&
+    !e.currentTarget.contains(lastPress)
+  );
 }
 
 const CONTROL_LABEL: Record<WindowButton, string> = {
@@ -171,6 +199,9 @@ function WindowControl({
       }
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => void act()}
+      onPointerUp={(e) => {
+        if (releasedAfterMove(e)) void act();
+      }}
     >
       <svg viewBox="0 0 16 16" aria-hidden>
         {kind === "close" && <path d="M4.5 4.5l7 7m0-7l-7 7" />}
@@ -183,6 +214,54 @@ function WindowControl({
           ))}
       </svg>
     </button>
+  );
+}
+
+/// The header bar's menu button and its menu.
+function HeaderMenu({
+  label,
+  onOpen,
+  onCloseAutoFocus,
+  children,
+}: {
+  label: string;
+  onOpen?: () => void;
+  onCloseAutoFocus?: (e: Event) => void;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const change = (next: boolean) => {
+    if (next) onOpen?.();
+    setOpen(next);
+  };
+  return (
+    <DM.Root open={open} onOpenChange={change}>
+      <DM.Trigger asChild>
+        <button
+          className={styles.menuButton}
+          tabIndex={-1}
+          aria-label={label}
+          onMouseDown={(e) => e.preventDefault()}
+          onPointerUp={(e) => {
+            if (!open && releasedAfterMove(e)) change(true);
+          }}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden>
+            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+          </svg>
+        </button>
+      </DM.Trigger>
+      <DM.Portal>
+        <DM.Content
+          className={menuStyles.content}
+          align="end"
+          loop
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
+          {children}
+        </DM.Content>
+      </DM.Portal>
+    </DM.Root>
   );
 }
 
@@ -202,37 +281,120 @@ const PRIMARY_MENU: ([string, string] | null)[] = [
 function PrimaryMenu({ run }: { run: CommandRunner }) {
   const commands = useCommands();
   return (
-    <DM.Root>
-      <DM.Trigger asChild>
-        <button
-          className={styles.menuButton}
-          tabIndex={-1}
-          aria-label="Main Menu"
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden>
-            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
-          </svg>
-        </button>
-      </DM.Trigger>
-      <DM.Portal>
-        <DM.Content className={menuStyles.content} align="end" loop>
-          {PRIMARY_MENU.map((entry, i) =>
-            entry ? (
-              <DM.Item
-                key={entry[0]}
-                className={menuStyles.item}
-                onSelect={() => run(entry[0])}
-              >
-                {entry[1]}
-                <Shortcut commands={commands} id={entry[0]} />
-              </DM.Item>
-            ) : (
-              <DM.Separator key={i} className={menuStyles.separator} />
-            ),
-          )}
-        </DM.Content>
-      </DM.Portal>
-    </DM.Root>
+    <HeaderMenu label="Main Menu">
+      {PRIMARY_MENU.map((entry, i) =>
+        entry ? (
+          <DM.Item
+            key={entry[0]}
+            className={menuStyles.item}
+            onSelect={() => run(entry[0])}
+          >
+            {entry[1]}
+            <Shortcut commands={commands} id={entry[0]} />
+          </DM.Item>
+        ) : (
+          <DM.Separator key={i} className={menuStyles.separator} />
+        ),
+      )}
+    </HeaderMenu>
   );
+}
+
+/// A viewer's or editor's menu, which is its menu bar elsewhere
+/// (`window_menu.rs`): each top-level menu a section, nested ones submenus.
+/// Fetched afresh as it opens, so checks reflect the window's state.
+function WindowMenu() {
+  const [entries, setEntries] = useState<MenuEntry[] | null>(null);
+  const returnFocus = useRef<Element | null>(null);
+
+  useEffect(() => {
+    // A viewer gets its menu as it is shown, which focuses it.
+    const refresh = () => commands.getWindowMenu().then(setEntries, () => {});
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  if (!entries?.length) return null;
+  return (
+    <HeaderMenu
+      label="Main Menu"
+      onOpen={() => {
+        returnFocus.current = document.activeElement;
+        commands.getWindowMenu().then(setEntries, () => {});
+      }}
+      // Viewer and editor windows have no owner for `REFOCUS_EVENT`;
+      // focus goes back where it was.
+      onCloseAutoFocus={(e) => {
+        const target = returnFocus.current;
+        if (target instanceof HTMLElement && target.isConnected) {
+          e.preventDefault();
+          target.focus();
+        } else {
+          refocusOwner(e);
+        }
+      }}
+    >
+      {entries.map((entry, i) =>
+        entry.kind === "submenu" ? (
+          <Fragment key={i}>
+            {i > 0 && <DM.Separator className={menuStyles.separator} />}
+            <DM.Label className={menuStyles.sectionHeader}>
+              {entry.label}
+            </DM.Label>
+            <MenuItems items={entry.items} />
+          </Fragment>
+        ) : (
+          <MenuItems key={i} items={[entry]} />
+        ),
+      )}
+    </HeaderMenu>
+  );
+}
+
+function MenuItems({ items }: { items: MenuEntry[] }) {
+  // Check items keep their labels in line with plain ones beside them.
+  const checks = items.some((e) => e.kind === "item" && e.checked !== null);
+  return items.map((entry, i) => {
+    switch (entry.kind) {
+      case "separator":
+        return <DM.Separator key={i} className={menuStyles.separator} />;
+      case "submenu":
+        return (
+          <DM.Sub key={i}>
+            <DM.SubTrigger
+              className={menuStyles.item}
+              disabled={!entry.enabled}
+            >
+              {checks && <span className={menuStyles.checkColumn} />}
+              <span className={menuStyles.itemLabel}>{entry.label}</span>
+              <span className={menuStyles.shortcut} aria-hidden>
+                ›
+              </span>
+            </DM.SubTrigger>
+            <DM.Portal>
+              <DM.SubContent className={menuStyles.content}>
+                <MenuItems items={entry.items} />
+              </DM.SubContent>
+            </DM.Portal>
+          </DM.Sub>
+        );
+      case "item":
+        return (
+          <DM.Item
+            key={entry.id}
+            className={menuStyles.item}
+            disabled={!entry.enabled}
+            onSelect={() => void commands.activateWindowMenuItem(entry.id)}
+          >
+            {checks && (
+              <span className={menuStyles.checkColumn}>
+                {entry.checked ? "✓" : ""}
+              </span>
+            )}
+            <span className={menuStyles.itemLabel}>{entry.label}</span>
+          </DM.Item>
+        );
+    }
+  });
 }
