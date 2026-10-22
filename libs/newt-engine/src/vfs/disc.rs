@@ -1,0 +1,764 @@
+//! Disc image (ISO 9660 / UDF) VFS — a read-only filesystem layered on the
+//! VFS holding the image, in the same way archives are. Unlike archives,
+//! file data inside a disc image is stored as raw contiguous extents, so
+//! every read maps 1:1 onto `upstream.read_range` — no whole-entry
+//! buffering, and a Blu-ray-sized image on S3 streams without ever being
+//! downloaded.
+//!
+//! Directories are parsed lazily per-directory (the sans-IO `newt-disc`
+//! parser hands us byte ranges to fetch); the image is immutable, so both
+//! the block cache and the directory cache never invalidate.
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+
+use tokio::sync::{Mutex, OnceCell};
+
+use newt_disc::{Chunk, DiscError, DiscFs, Entry, EntryData, EntryKind, ExtentKind, ProbeOp, Step};
+
+use crate::vfs::FileChunk;
+use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
+use newt_common::Error;
+use newt_common::path::{Path, PathBuf};
+
+use super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
+
+use super::open_read_at;
+use super::origin::{
+    build_origin_meta, origin_breadcrumbs, origin_format_path, origin_mount_label,
+    origin_try_parse_display_path,
+};
+use super::{Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor};
+use newt_common::path::VfsPath;
+
+/// Whether a file's first [`DISC_SNIFF_LEN`] bytes hold an ISO 9660 or
+/// UDF volume recognition sequence: its first descriptor sits at 32 KiB,
+/// its standard identifier one byte in.
+pub fn is_disc_image(header: &[u8]) -> bool {
+    matches!(header.get(32769..32774), Some(b"CD001" | b"BEA01"))
+}
+
+pub const DISC_SNIFF_LEN: u64 = 32774;
+
+/// Metadata reads go through an aligned block cache so a directory walk
+/// over a high-latency upstream (S3) coalesces into a few range GETs
+/// instead of one per structure. File-content reads bypass it.
+const CACHE_BLOCK: u64 = 128 * 1024;
+const CACHE_MAX_BLOCKS: usize = 128; // 16 MiB
+
+/// Chunk size for the streaming reader behind `open_read_async`.
+const STREAM_CHUNK: u64 = 256 * 1024;
+
+pub async fn mount(
+    origin: VfsPath,
+    ctx: &crate::vfs::mount::MountContext<'_>,
+) -> Result<Arc<dyn Vfs>, Error> {
+    log::info!("mounting disc image VFS for origin={}", origin);
+    let (upstream_vfs, image_path) = ctx.registry.resolve(&origin)?;
+    let (mount_meta, display_path) = build_origin_meta(upstream_vfs.as_ref(), &origin);
+    Ok(Arc::new(DiscVfs {
+        upstream: upstream_vfs,
+        image_path,
+        origin,
+        mount_meta,
+        display_path,
+        reporter: ctx.progress_reporter.clone(),
+        state: OnceCell::new(),
+    }))
+}
+
+fn disc_err(e: DiscError) -> Error {
+    Error::custom(e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// DiscVfsDescriptor
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct DiscVfsDescriptor;
+
+impl VfsDescriptor for DiscVfsDescriptor {
+    fn type_name(&self) -> &'static str {
+        "disc"
+    }
+    fn display_name(&self) -> &'static str {
+        "Disc image"
+    }
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> super::MetadataTraits {
+        // Rock Ridge / UDF record POSIX ownership; plain ISO 9660 images
+        // just yield empty cells for these, same as before.
+        super::MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        }
+    }
+    fn auto_mount_request(&self) -> Option<super::MountRequest> {
+        None
+    }
+    fn origin_kind(&self) -> super::OriginKind {
+        super::OriginKind::Entry
+    }
+    fn is_ephemeral(&self) -> bool {
+        true
+    }
+    fn auto_refresh(&self) -> bool {
+        false
+    }
+    fn can_watch(&self) -> bool {
+        false
+    }
+    fn can_read(&self) -> bool {
+        true
+    }
+    fn can_overwrite(&self) -> bool {
+        false
+    }
+    fn can_create_directory(&self) -> bool {
+        false
+    }
+    fn can_create_symlink(&self) -> bool {
+        false
+    }
+    fn can_touch(&self) -> bool {
+        false
+    }
+    fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
+        false
+    }
+    fn can_set_metadata(&self) -> bool {
+        false
+    }
+    fn can_remove(&self) -> bool {
+        false
+    }
+    fn can_remove_tree(&self) -> bool {
+        false
+    }
+    fn has_symlinks(&self) -> bool {
+        true
+    }
+    fn can_stat_directories(&self) -> bool {
+        true
+    }
+    fn can_fs_stats(&self) -> bool {
+        false
+    }
+    fn can_rename(&self) -> bool {
+        false
+    }
+    fn can_copy_within(&self) -> bool {
+        false
+    }
+    fn can_hard_link(&self) -> bool {
+        false
+    }
+
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
+        origin_format_path(path, mount_meta)
+    }
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        origin_breadcrumbs(path, mount_meta)
+    }
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        origin_try_parse_display_path(input, mount_meta)
+    }
+    fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
+        origin_mount_label(mount_meta)
+    }
+}
+
+static DISC_VFS_DESCRIPTOR: DiscVfsDescriptor = DiscVfsDescriptor;
+inventory::submit!(RegisteredDescriptor(&DISC_VFS_DESCRIPTOR));
+
+// ---------------------------------------------------------------------------
+// Block cache
+// ---------------------------------------------------------------------------
+
+struct BlockCache {
+    upstream: Arc<dyn Vfs>,
+    image_path: PathBuf,
+    image_size: u64,
+    inner: Mutex<CacheInner>,
+}
+
+#[derive(Default)]
+struct CacheInner {
+    blocks: HashMap<u64, Arc<Vec<u8>>>,
+    /// Insertion order for eviction. The parser's access pattern is a
+    /// forward walk over clustered structures; FIFO is close enough to
+    /// LRU here and keeps the bookkeeping trivial.
+    order: VecDeque<u64>,
+}
+
+impl BlockCache {
+    async fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        if offset
+            .checked_add(len)
+            .is_none_or(|end| end > self.image_size)
+        {
+            return Err(Error::custom("disc image structure out of bounds"));
+        }
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let first = offset / CACHE_BLOCK;
+        let last = (offset + len - 1) / CACHE_BLOCK;
+
+        // Snapshot present blocks, then fetch the missing ones
+        // concurrently. Assembly uses only this local map, so concurrent
+        // eviction can't invalidate it.
+        let mut local: HashMap<u64, Arc<Vec<u8>>> = HashMap::new();
+        let mut missing: Vec<u64> = Vec::new();
+        {
+            let inner = self.inner.lock().await;
+            for b in first..=last {
+                match inner.blocks.get(&b) {
+                    Some(data) => {
+                        local.insert(b, data.clone());
+                    }
+                    None => missing.push(b),
+                }
+            }
+        }
+        if !missing.is_empty() {
+            let fetched =
+                futures::future::try_join_all(missing.iter().map(|&b| self.fetch_block(b))).await?;
+            let mut inner = self.inner.lock().await;
+            for (b, data) in missing.into_iter().zip(fetched) {
+                local.insert(b, data.clone());
+                if inner.blocks.insert(b, data).is_none() {
+                    inner.order.push_back(b);
+                }
+                while inner.order.len() > CACHE_MAX_BLOCKS {
+                    if let Some(evict) = inner.order.pop_front() {
+                        inner.blocks.remove(&evict);
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(len as usize);
+        for b in first..=last {
+            let data = &local[&b];
+            let block_start = b * CACHE_BLOCK;
+            let from = offset.max(block_start) - block_start;
+            let to = (offset + len - block_start).min(data.len() as u64);
+            if from > to {
+                return Err(Error::custom("disc image read out of cached range"));
+            }
+            out.extend_from_slice(&data[from as usize..to as usize]);
+        }
+        if out.len() != len as usize {
+            return Err(Error::custom(format!(
+                "short read from disc image: got {} of {} bytes",
+                out.len(),
+                len
+            )));
+        }
+        Ok(out)
+    }
+
+    async fn fetch_block(&self, block: u64) -> Result<Arc<Vec<u8>>, Error> {
+        let start = block * CACHE_BLOCK;
+        let len = CACHE_BLOCK.min(self.image_size - start);
+        let chunk = self
+            .upstream
+            .read_range(&self.image_path, start, len)
+            .await?;
+        Ok(Arc::new(chunk.data))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DiscVfs
+// ---------------------------------------------------------------------------
+
+pub struct DiscVfs {
+    upstream: Arc<dyn Vfs>,
+    image_path: PathBuf,
+    origin: VfsPath,
+    mount_meta: Vec<u8>,
+    display_path: String,
+    reporter: Arc<dyn super::ProgressReporter>,
+    state: OnceCell<DiscState>,
+}
+
+struct DiscState {
+    fs: DiscFs,
+    cache: BlockCache,
+    /// Directory listings keyed by canonical resolved path ("" = root).
+    /// Never invalidated — the image is immutable.
+    dirs: Mutex<HashMap<String, Arc<Vec<Entry>>>>,
+}
+
+async fn fetch_chunks(
+    cache: &BlockCache,
+    ranges: Vec<std::ops::Range<u64>>,
+) -> Result<Vec<Chunk>, Error> {
+    futures::future::try_join_all(ranges.into_iter().map(|r| async move {
+        Ok::<_, Error>(Chunk {
+            offset: r.start,
+            data: cache.read(r.start, r.end - r.start).await?,
+        })
+    }))
+    .await
+}
+
+/// Split an absolute-within-entry byte range across the entry's extents,
+/// yielding (image_offset, len, kind) pieces in order.
+fn slice_extents(
+    extents: &[newt_disc::Extent],
+    mut offset: u64,
+    mut len: u64,
+) -> Vec<(u64, u64, ExtentKind)> {
+    let mut out = Vec::new();
+    for e in extents {
+        if len == 0 {
+            break;
+        }
+        if offset >= e.len {
+            offset -= e.len;
+            continue;
+        }
+        let take = (e.len - offset).min(len);
+        out.push((e.offset + offset, take, e.kind));
+        offset = 0;
+        len -= take;
+    }
+    out
+}
+
+fn normalize_components(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in s.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            c => out.push(c.to_string()),
+        }
+    }
+    out
+}
+
+fn entry_to_file(e: &Entry) -> File {
+    File {
+        attributes: None,
+        name: e.name.clone(),
+        size: (e.kind != EntryKind::Dir).then_some(e.size),
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: e.nlink.map(u64::from),
+        is_dir: e.kind == EntryKind::Dir,
+        is_hidden: e.hidden || e.name.starts_with('.'),
+        symlink: (e.kind == EntryKind::Symlink).then(|| Symlink::from_read(e.link_target.clone())),
+        user: e.uid.map(UserGroup::Id),
+        group: e.gid.map(UserGroup::Id),
+        mode: e.mode.map(Mode),
+        modified: e.modified,
+        accessed: e.accessed,
+        created: e.created,
+        key: None,
+        source: None,
+    }
+}
+
+impl DiscVfs {
+    async fn ensure_state(&self) -> Result<&DiscState, Error> {
+        self.state
+            .get_or_try_init(|| async {
+                // One-shot progress message while the volume structures are
+                // probed; clear on exit.
+                let mut extra = std::collections::BTreeMap::new();
+                extra.insert("path".to_string(), self.display_path.clone());
+                self.reporter.report(Some(super::VfsProgress {
+                    stage: "Reading disc image".into(),
+                    processed: None,
+                    total: None,
+                    extra,
+                }));
+                struct ClearOnDrop<'a>(&'a Arc<dyn super::ProgressReporter>);
+                impl Drop for ClearOnDrop<'_> {
+                    fn drop(&mut self) {
+                        self.0.report(None);
+                    }
+                }
+                let _clear = ClearOnDrop(&self.reporter);
+
+                let size = self
+                    .upstream
+                    .file_info(&self.image_path, true)
+                    .await?
+                    .size
+                    .unwrap_or(0);
+                let cache = BlockCache {
+                    upstream: self.upstream.clone(),
+                    image_path: self.image_path.clone(),
+                    image_size: size,
+                    inner: Mutex::new(CacheInner::default()),
+                };
+
+                let mut op = ProbeOp::new(size);
+                let mut fetched = Vec::new();
+                let fs = loop {
+                    match op.step(fetched).map_err(disc_err)? {
+                        Step::Done(fs) => break fs,
+                        Step::Need(ranges) => fetched = fetch_chunks(&cache, ranges).await?,
+                    }
+                };
+                log::info!(
+                    "disc: {} recognized as {} (label {:?})",
+                    self.display_path,
+                    fs.describe(),
+                    fs.volume_label()
+                );
+
+                Ok(DiscState {
+                    fs,
+                    cache,
+                    dirs: Mutex::new(HashMap::new()),
+                })
+            })
+            .await
+    }
+
+    /// List a directory whose canonical resolved path is `key`, through the
+    /// permanent cache.
+    async fn list_resolved(
+        &self,
+        state: &DiscState,
+        key: &str,
+        dir: &Entry,
+    ) -> Result<Arc<Vec<Entry>>, Error> {
+        if let Some(hit) = state.dirs.lock().await.get(key) {
+            return Ok(hit.clone());
+        }
+        let mut op = state.fs.list_dir(dir);
+        let mut fetched = Vec::new();
+        let entries = loop {
+            match op.step(fetched).map_err(disc_err)? {
+                Step::Done(entries) => break entries,
+                Step::Need(ranges) => fetched = fetch_chunks(&state.cache, ranges).await?,
+            }
+        };
+        let entries = Arc::new(entries);
+        state
+            .dirs
+            .lock()
+            .await
+            .insert(key.to_string(), entries.clone());
+        Ok(entries)
+    }
+
+    /// Resolve a path to (canonical key, entry), following intermediate
+    /// symlinks always and the final one when `follow_last`.
+    async fn resolve(
+        &self,
+        state: &DiscState,
+        path: &Path,
+        follow_last: bool,
+    ) -> Result<(String, Entry), Error> {
+        let mut comps = normalize_components(path.as_wire_str());
+        let mut hops = 0usize;
+
+        'restart: loop {
+            let mut cur = state.fs.root().clone();
+            let mut resolved: Vec<String> = Vec::new();
+            let mut idx = 0usize;
+            while idx < comps.len() {
+                if cur.kind != EntryKind::Dir {
+                    return Err(Error {
+                        kind: newt_common::ErrorKind::NotADirectory,
+                        message: format!("not a directory: /{}", resolved.join("/")),
+                    });
+                }
+                let entries = self.list_resolved(state, &resolved.join("/"), &cur).await?;
+                let name = &comps[idx];
+                let entry = entries
+                    .iter()
+                    .find(|e| e.name == *name)
+                    .ok_or_else(|| {
+                        Error::not_found(format!("no such file in disc image: {}", name))
+                    })?
+                    .clone();
+                let is_last = idx == comps.len() - 1;
+                if entry.kind == EntryKind::Symlink
+                    && (!is_last || follow_last)
+                    && entry.link_target.as_deref().is_some_and(|t| !t.is_empty())
+                {
+                    hops += 1;
+                    if hops > super::MAX_SYMLINK_HOPS {
+                        return Err(Error::custom("too many levels of symbolic links"));
+                    }
+                    let target = entry.link_target.as_deref().unwrap_or_default();
+                    let mut next = if target.starts_with('/') {
+                        Vec::new()
+                    } else {
+                        resolved.clone()
+                    };
+                    for c in target.split('/') {
+                        match c {
+                            "" | "." => {}
+                            ".." => {
+                                next.pop();
+                            }
+                            c => next.push(c.to_string()),
+                        }
+                    }
+                    next.extend(comps[idx + 1..].iter().cloned());
+                    comps = next;
+                    continue 'restart;
+                }
+                resolved.push(name.clone());
+                cur = entry;
+                idx += 1;
+            }
+            return Ok((resolved.join("/"), cur));
+        }
+    }
+
+    /// For a symlink listing row, stat the target and mirror its `is_dir` /
+    /// `size` — the lstat+stat pattern the local VFS and archives use.
+    async fn fill_symlink_target(&self, state: &DiscState, dir_key: &str, file: &mut File) {
+        let full = if dir_key.is_empty() {
+            file.name.clone()
+        } else {
+            format!("{}/{}", dir_key, file.name)
+        };
+        let path = PathBuf::from_wire_str(&full);
+        if let Ok((_, target)) = self.resolve(state, &path, true).await {
+            file.is_dir = target.kind == EntryKind::Dir;
+            file.size = (target.kind != EntryKind::Dir).then_some(target.size);
+        }
+    }
+
+    /// Read `length` bytes at `offset` of a resolved file entry.
+    async fn read_entry_range(
+        &self,
+        entry: &Entry,
+        offset: u64,
+        length: u64,
+    ) -> Result<FileChunk, Error> {
+        let total_size = entry.size;
+        if offset >= total_size || length == 0 {
+            return Ok(FileChunk {
+                data: Vec::new(),
+                offset,
+                total_size,
+            });
+        }
+        let length = length.min(total_size - offset);
+        let data = match &entry.data {
+            EntryData::Inline(data) => {
+                let start = (offset as usize).min(data.len());
+                let end = ((offset + length) as usize).min(data.len());
+                data[start..end].to_vec()
+            }
+            EntryData::Extents(extents) => {
+                let mut out = Vec::with_capacity(length as usize);
+                for (piece_off, piece_len, kind) in slice_extents(extents, offset, length) {
+                    match kind {
+                        ExtentKind::Recorded => {
+                            let chunk = self
+                                .upstream
+                                .read_range(&self.image_path, piece_off, piece_len)
+                                .await?;
+                            if (chunk.data.len() as u64) < piece_len {
+                                return Err(Error::custom(
+                                    "disc image truncated: extent read came up short",
+                                ));
+                            }
+                            out.extend_from_slice(&chunk.data[..piece_len as usize]);
+                        }
+                        ExtentKind::Sparse => {
+                            out.resize(out.len() + piece_len as usize, 0);
+                        }
+                    }
+                }
+                out
+            }
+        };
+        Ok(FileChunk {
+            data,
+            offset,
+            total_size,
+        })
+    }
+
+    async fn resolve_file(&self, path: &Path) -> Result<Entry, Error> {
+        let state = self.ensure_state().await?;
+        let (_, entry) = self.resolve(state, path, true).await?;
+        if entry.kind == EntryKind::Dir {
+            return Err(Error {
+                kind: newt_common::ErrorKind::IsADirectory,
+                message: format!("is a directory: {}", path),
+            });
+        }
+        Ok(entry)
+    }
+}
+
+#[async_trait::async_trait]
+impl Vfs for DiscVfs {
+    fn descriptor(&self) -> &'static dyn VfsDescriptor {
+        &DISC_VFS_DESCRIPTOR
+    }
+
+    fn origin(&self) -> Option<&VfsPath> {
+        Some(&self.origin)
+    }
+
+    fn mount_meta(&self) -> Vec<u8> {
+        self.mount_meta.clone()
+    }
+
+    async fn list_files(
+        &self,
+        path: &Path,
+        _batch_tx: Option<tokio::sync::mpsc::Sender<Vec<File>>>,
+    ) -> Result<super::VfsFileList, Error> {
+        let state = self.ensure_state().await?;
+        let (key, dir) = self.resolve(state, path, true).await?;
+        if dir.kind != EntryKind::Dir {
+            return Err(Error {
+                kind: newt_common::ErrorKind::NotADirectory,
+                message: format!("not a directory: {}", path),
+            });
+        }
+        let entries = self.list_resolved(state, &key, &dir).await?;
+        let mut files = vec![File::parent_dir()];
+        for e in entries.iter() {
+            let mut file = entry_to_file(e);
+            if file.is_symlink() {
+                self.fill_symlink_target(state, &key, &mut file).await;
+            }
+            files.push(file);
+        }
+        Ok(files.into())
+    }
+
+    async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
+        std::future::pending().await
+    }
+
+    async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {
+        Ok(None)
+    }
+
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        let state = self.ensure_state().await?;
+        let (key, _) = self.resolve(state, path, true).await?;
+        Ok(PathBuf::from_wire_str(&key))
+    }
+
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
+        let state = self.ensure_state().await?;
+        let (key, entry) = self.resolve(state, path, follow).await?;
+        let mut file = entry_to_file(&entry);
+        if follow {
+            // Resolution stops at a link whose target is unknown.
+            if file.is_symlink() {
+                return Err(Error::not_found(format!("link leads nowhere: {}", path)));
+            }
+            file.name = path.file_name().unwrap_or_default().to_string();
+        } else if file.is_symlink() {
+            let parent_key = match key.rfind('/') {
+                Some(pos) => key[..pos].to_string(),
+                None => String::new(),
+            };
+            self.fill_symlink_target(state, &parent_key, &mut file)
+                .await;
+        }
+        Ok(file)
+    }
+
+    async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
+        let entry = self.resolve_file(path).await?;
+        self.read_entry_range(&entry, offset, length).await
+    }
+
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, Error> {
+        let entry = self.resolve_file(path).await?;
+        // Inline entries never touch the image again — no handle for them.
+        let upstream = match entry.data {
+            EntryData::Inline(_) => None,
+            EntryData::Extents(_) => Some(open_read_at(&self.upstream, &self.image_path).await?),
+        };
+        Ok(Box::new(PipelinedReader::new(
+            ExtentDriver::new(entry),
+            upstream,
+            "disc image",
+        )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExtentDriver — sans-IO chunk driver over an entry's extents
+// ---------------------------------------------------------------------------
+
+/// [`ChunkDriver`] streaming a file out of the image, one `STREAM_CHUNK`
+/// at a time. Inline data is pre-buffered; sparse extents synthesize
+/// zeros without touching the upstream.
+struct ExtentDriver {
+    /// Remaining (image_offset, len, kind) pieces.
+    pieces: VecDeque<(u64, u64, ExtentKind)>,
+    inline: Option<Vec<u8>>,
+}
+
+impl ExtentDriver {
+    fn new(entry: Entry) -> Self {
+        match entry.data {
+            EntryData::Inline(mut data) => {
+                data.truncate(entry.size as usize);
+                ExtentDriver {
+                    pieces: VecDeque::new(),
+                    inline: Some(data),
+                }
+            }
+            EntryData::Extents(extents) => ExtentDriver {
+                pieces: slice_extents(&extents, 0, entry.size).into(),
+                inline: None,
+            },
+        }
+    }
+}
+
+impl ChunkDriver for ExtentDriver {
+    fn step(&mut self, fetched: Option<(u64, Vec<u8>)>) -> Result<DriveStep, Error> {
+        if let Some((_, data)) = fetched {
+            return Ok(DriveStep::Output(data));
+        }
+        if let Some(data) = self.inline.take() {
+            return Ok(DriveStep::Output(data));
+        }
+        match self.pieces.pop_front() {
+            None => Ok(DriveStep::Done),
+            Some((off, len, kind)) => {
+                let take = len.min(STREAM_CHUNK);
+                if take < len {
+                    self.pieces.push_front((off + take, len - take, kind));
+                }
+                match kind {
+                    ExtentKind::Sparse => Ok(DriveStep::Output(vec![0u8; take as usize])),
+                    ExtentKind::Recorded => Ok(DriveStep::Need {
+                        offset: off,
+                        len: take,
+                    }),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "disc_tests.rs"]
+mod tests;

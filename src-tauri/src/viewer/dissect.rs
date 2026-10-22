@@ -21,8 +21,9 @@ use fillyfoal::{
     Activity, ByteRequest, ChildState, Count, DecodeProgress, DiagKind, Diagnostic, Limits, NodeId,
     Progress, ReadProgress, Secret, SecretRequest, Session, SourceId, Span, Wait, formats,
 };
-use newt_common::filesystem::Filesystem;
-use newt_common::vfs::{VfsPath, VfsRandomReader};
+use newt_common::path::VfsPath;
+use newt_engine::filesystem::Filesystem;
+use newt_engine::vfs::VfsRandomReader;
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, State};
@@ -1416,11 +1417,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl VfsRandomReader for Bytes {
-        async fn read_at(
-            &mut self,
-            offset: u64,
-            len: u64,
-        ) -> Result<Vec<u8>, newt_common::error::Error> {
+        async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, newt_common::Error> {
             let start = (offset as usize).min(self.0.len());
             let end = (offset.saturating_add(len) as usize).min(self.0.len());
             Ok(self.0[start..end].to_vec())

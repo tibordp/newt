@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use log::info;
 
-use newt_common::terminal::TerminalClient;
+use newt_engine::terminal::TerminalClient;
 
 use crate::common::Error;
 

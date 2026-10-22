@@ -142,15 +142,6 @@ impl From<tokio::task::JoinError> for Error {
     }
 }
 
-impl From<notify::Error> for Error {
-    fn from(e: notify::Error) -> Self {
-        Self {
-            kind: ErrorKind::Other,
-            message: e.to_string(),
-        }
-    }
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

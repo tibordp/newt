@@ -6,22 +6,22 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, BufReader};
 
-use newt_common::api::API_LIST_FILES;
-use newt_common::api::API_VFS_MOUNT_META;
-use newt_common::connect::{AgentMode, ConnectLog, SpawnSpec, make_stream};
-use newt_common::rpc::Communicator;
-use newt_common::vfs::agent::AgentConnectionGuard;
-use newt_common::vfs::path::PathBuf as VfsPathBuf;
-use newt_common::vfs::{
+use newt_common::path::PathBuf as VfsPathBuf;
+use newt_engine::api::API_LIST_FILES;
+use newt_engine::api::API_VFS_MOUNT_META;
+use newt_engine::connect::{AgentMode, ConnectLog, SpawnSpec, make_stream};
+use newt_engine::vfs::agent::AgentConnectionGuard;
+use newt_engine::vfs::{
     NamedStreams, PathStyle, RemoteVfs, Vfs, mount_named_streams, relabel_mount_meta,
 };
+use newt_rpc::Communicator;
 
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_newt-agent")
 }
 
 fn vfs_path_of(native: &std::path::Path) -> VfsPathBuf {
-    newt_common::vfs::path::PathBuf::from_native(native)
+    newt_common::path::PathBuf::from_native(native)
 }
 
 /// Wire a spawned serve-vfs agent's stdio into the proxy `RemoteVfs`,
@@ -83,13 +83,13 @@ async fn serve_vfs_lists_and_reads_files() {
         Some("test".to_string())
     );
     assert_eq!(
-        newt_common::vfs::mount_meta_kind(&vfs.mount_meta()),
+        newt_engine::vfs::mount_meta_kind(&vfs.mount_meta()),
         Some("Docker".to_string())
     );
     // The roots are asked of the agent, as they are now.
     assert_eq!(
         vfs.roots().await.unwrap(),
-        [newt_common::vfs::RootInfo::root()]
+        [newt_engine::vfs::RootInfo::root()]
     );
     // What it serves is described by the agent, not assumed by the mount.
     assert_eq!(
@@ -138,11 +138,11 @@ async fn serve_vfs_does_not_expose_session_api() {
     // served: an FS-only agent never constructs those dispatchers, and an
     // API nothing serves ends the connection.
     let args = (
-        newt_common::vfs::VfsPath::root(newt_common::vfs::VfsId::ROOT),
-        newt_common::filesystem::ListFilesOptions { strict: false },
+        newt_common::path::VfsPath::root(newt_common::path::VfsId::ROOT),
+        newt_engine::filesystem::ListFilesOptions { strict: false },
     );
     let session_api = communicator
-        .invoke::<_, Result<newt_common::vfs::FileList, newt_common::Error>>(API_LIST_FILES, &args)
+        .invoke::<_, Result<newt_engine::vfs::FileList, newt_common::Error>>(API_LIST_FILES, &args)
         .await;
     assert_eq!(
         session_api.unwrap_err().kind,
@@ -153,7 +153,7 @@ async fn serve_vfs_does_not_expose_session_api() {
 struct TestResolver;
 
 #[async_trait::async_trait]
-impl newt_common::agent_resolver::AgentResolver for TestResolver {
+impl newt_engine::agent_resolver::AgentResolver for TestResolver {
     async fn agent_hash(&self) -> Result<String, newt_common::Error> {
         Ok("cafebabe00112233".to_string())
     }
@@ -176,12 +176,12 @@ impl ConnectLog for EprintLog {
 struct NoAskpass;
 
 #[async_trait::async_trait]
-impl newt_common::askpass::AskpassProvider for NoAskpass {
+impl newt_engine::askpass::AskpassProvider for NoAskpass {
     async fn prompt(
         &self,
-        _req: newt_common::askpass::AskpassRequest,
-    ) -> newt_common::askpass::AskpassResponse {
-        newt_common::askpass::AskpassResponse(None)
+        _req: newt_engine::askpass::AskpassRequest,
+    ) -> newt_engine::askpass::AskpassResponse {
+        newt_engine::askpass::AskpassResponse(None)
     }
 }
 
@@ -203,7 +203,7 @@ async fn bootstrap_spawns_serve_vfs_agent() {
         skip_bootstrap: false,
     };
 
-    let spawned = newt_common::connect::spawn(
+    let spawned = newt_engine::connect::spawn(
         &spec,
         AgentMode::ServeVfs,
         false,
@@ -240,7 +240,7 @@ async fn bootstrap_and_list(
         label: "test".to_string(),
         skip_bootstrap: false,
     };
-    let spawned = newt_common::connect::spawn(
+    let spawned = newt_engine::connect::spawn(
         &spec,
         AgentMode::ServeVfs,
         fresh_agent,
@@ -267,7 +267,7 @@ async fn a_fresh_agent_replaces_a_broken_cached_one() {
     let cache = tempfile::tempdir().unwrap();
     let cached = cache.path().join("newt").join(format!(
         "newt-agent-cafebabe00112233-{}",
-        newt_common::agent_resolver::local_agent_triple()
+        newt_engine::agent_resolver::local_agent_triple()
     ));
     std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
     std::fs::write(&cached, "#!/bin/sh\nexit 1\n").unwrap();
@@ -283,29 +283,29 @@ async fn a_fresh_agent_replaces_a_broken_cached_one() {
 // ---------------------------------------------------------------------------
 
 struct MountHarness {
-    registry: Arc<newt_common::vfs::VfsRegistry>,
+    registry: Arc<newt_engine::vfs::VfsRegistry>,
     host_communicator: Arc<std::sync::OnceLock<Communicator>>,
-    resolver: Arc<dyn newt_common::agent_resolver::AgentResolver>,
-    reporter: Arc<dyn newt_common::vfs::ProgressReporter>,
+    resolver: Arc<dyn newt_engine::agent_resolver::AgentResolver>,
+    reporter: Arc<dyn newt_engine::vfs::ProgressReporter>,
 }
 
 impl MountHarness {
     fn new() -> Self {
         Self {
-            registry: Arc::new(newt_common::vfs::VfsRegistry::with_root(Arc::new(
-                newt_common::vfs::LocalVfs::new(),
+            registry: Arc::new(newt_engine::vfs::VfsRegistry::with_root(Arc::new(
+                newt_engine::vfs::LocalVfs::new(),
             ))),
             host_communicator: Arc::new(std::sync::OnceLock::new()),
             resolver: Arc::new(TestResolver),
-            reporter: Arc::new(newt_common::vfs::ScopedReporter::new(
-                Arc::new(newt_common::vfs::NoopProgressSink),
-                newt_common::vfs::VfsId(1),
+            reporter: Arc::new(newt_engine::vfs::ScopedReporter::new(
+                Arc::new(newt_engine::vfs::NoopProgressSink),
+                newt_common::path::VfsId(1),
             )),
         }
     }
 
-    fn ctx(&self) -> newt_common::vfs::mount::MountContext<'_> {
-        newt_common::vfs::mount::MountContext {
+    fn ctx(&self) -> newt_engine::vfs::mount::MountContext<'_> {
+        newt_engine::vfs::mount::MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
             sftp_askpass: None,
@@ -327,7 +327,7 @@ async fn agent_mount_succeeds_against_live_agent() {
         label: "test".to_string(),
         skip_bootstrap: true,
     };
-    let vfs = newt_common::vfs::agent::mount(
+    let vfs = newt_engine::vfs::agent::mount(
         spec,
         "Custom".to_string(),
         "probe-test".to_string(),
@@ -351,7 +351,7 @@ async fn agent_mount_fails_when_agent_dies_on_startup() {
         label: "test".to_string(),
         skip_bootstrap: true,
     };
-    let err = newt_common::vfs::agent::mount(
+    let err = newt_engine::vfs::agent::mount(
         spec,
         "Custom".to_string(),
         "dead-agent".to_string(),

@@ -118,7 +118,7 @@ pub async fn reveal_config_file(
         .host_local_vfs_id()
         .ok_or_else(|| Error::Custom("No local filesystem mounted".to_string()))?;
     let target =
-        newt_common::vfs::VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::from_native(&path));
+        newt_common::path::VfsPath::new(vfs_id, newt_common::path::PathBuf::from_native(&path));
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
@@ -136,9 +136,9 @@ pub async fn reveal_config_file(
 pub async fn get_hot_paths(
     ctx: MainWindowContext,
     global_ctx: tauri::State<'_, GlobalContext>,
-) -> Result<Vec<newt_common::hot_paths::HotPathEntry>, Error> {
-    use newt_common::hot_paths::{HotPathCategory, HotPathEntry};
-    use newt_common::vfs::VfsPath;
+) -> Result<Vec<newt_engine::hot_paths::HotPathEntry>, Error> {
+    use newt_common::path::VfsPath;
+    use newt_engine::hot_paths::{HotPathCategory, HotPathEntry};
 
     let prefs = global_ctx.preferences().resolved();
     let hp_settings = &prefs.settings.hot_paths;
@@ -165,8 +165,8 @@ pub async fn get_hot_paths(
             Some(path) => Some(path),
             None if names_a_filesystem(&bm.path) => None,
             None => Some(VfsPath::new(
-                newt_common::vfs::VfsId::ROOT,
-                newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(&bm.path)),
+                newt_common::path::VfsId::ROOT,
+                newt_common::path::PathBuf::from_native(std::path::Path::new(&bm.path)),
             )),
         };
         entries.push(HotPathEntry {

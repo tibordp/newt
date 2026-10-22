@@ -7,14 +7,7 @@ if [ -z "$(git diff --cached --name-only -- '*.rs' '*Cargo.toml' Cargo.lock)" ];
   exit 0
 fi
 
-# `pty-process` and `newt-agent` are Unix-only (POSIX PTY primitives, askpass
-# UDS, pkexec, …) and excluded from `default-members` on Windows. Mirror that
-# exclusion here so the hook doesn't try to lint them on a Windows host.
-case "$OSTYPE" in
-  msys*|cygwin*|win32) CLIPPY_EXCLUDES="--exclude pty-process --exclude newt-agent" ;;
-  *) CLIPPY_EXCLUDES="" ;;
-esac
-cargo clippy --workspace $CLIPPY_EXCLUDES -- -D warnings
+cargo clippy --workspace -- -D warnings
 
 # Regenerate tauri-specta TS bindings (host-independent via the
 # `specta-bindings` feature); fail if they drift from what's staged.

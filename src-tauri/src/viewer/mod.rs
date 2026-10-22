@@ -4,8 +4,9 @@ mod markdown;
 mod table;
 pub mod webview_formats;
 
-use newt_common::find::{SearchMatch, SearchPattern};
-use newt_common::vfs::{Mode, VfsPath};
+use newt_common::path::VfsPath;
+use newt_engine::find::{SearchMatch, SearchPattern};
+use newt_engine::vfs::Mode;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
@@ -931,9 +932,9 @@ pub async fn render_markdown(
     tokio::task::spawn_blocking(move || {
         let body = data.get(bom_len as usize..).unwrap_or_default();
         let mut nodes = markdown::render(&encoding::decode(body, &encoding));
-        let root_of = |p: &newt_common::vfs::path::Path| match &descriptor {
+        let root_of = |p: &newt_common::path::Path| match &descriptor {
             Some((descriptor, meta)) => descriptor.root_of(p, meta),
-            None => newt_common::vfs::path::PathBuf::root(),
+            None => newt_common::path::PathBuf::root(),
         };
         markdown::resolve_images(&mut nodes, &path.path, &root_of);
         nodes

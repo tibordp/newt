@@ -1,15 +1,16 @@
 use log::debug;
 use log::info;
 use log::warn;
-use newt_common::enrich::{
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::enrich::{
     Annotation, ContextBadge, EnrichScope, EnricherClient, EnrichmentBatch, EnrichmentEvent,
 };
-use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::File;
-use newt_common::vfs::FileList;
-use newt_common::vfs::FsStats;
-use newt_common::vfs::{OriginKind, PathStyle, VfsId, VfsPath};
+use newt_engine::filesystem::Filesystem;
+use newt_engine::filesystem::ListFilesOptions;
+use newt_engine::vfs::File;
+use newt_engine::vfs::FileList;
+use newt_engine::vfs::FsStats;
+use newt_engine::vfs::{OriginKind, PathStyle};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -527,7 +528,7 @@ impl Pane {
             !silent && !same_path
         );
         let (batch_tx, mut batch_rx) =
-            mpsc::channel::<FileList>(newt_common::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
+            mpsc::channel::<FileList>(newt_engine::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
         let streaming_fut = self.fs.list_files(
             target.clone(),
             ListFilesOptions { strict: !silent },
@@ -861,7 +862,7 @@ impl Pane {
             // the pane's VFS × preference gate. Nothing applicable →
             // no request at all (no RPC round-trip on e.g. S3 panes).
             let enrichers: Vec<String> = match self.vfs_info.descriptor(path.vfs_id) {
-                Some((vfs_descriptor, _)) => newt_common::enrich::all_enricher_descriptors()
+                Some((vfs_descriptor, _)) => newt_engine::enrich::all_enricher_descriptors()
                     .filter(|d| {
                         d.automatic()
                             && d.applies_to_vfs(vfs_descriptor)
@@ -1112,7 +1113,7 @@ impl Pane {
             self.vfs_info
                 .descriptor(vfs_id)
                 .map(|(desc, meta)| desc.root_of(&base.path, &meta))
-                .unwrap_or_else(newt_common::vfs::path::PathBuf::root)
+                .unwrap_or_else(newt_common::path::PathBuf::root)
         } else {
             base.path.clone()
         };
@@ -1128,7 +1129,7 @@ impl Pane {
     fn resolve_breadcrumb(vfs_info: &dyn VfsInfo, vfs_id: VfsId, nav_path: &str) -> VfsPath {
         Self::walk(
             vfs_info,
-            VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::root()),
+            VfsPath::new(vfs_id, newt_common::path::PathBuf::root()),
             nav_path.split('/'),
         )
     }
@@ -1301,7 +1302,7 @@ impl Pane {
     }
 
     fn entry_view(&self, entry: &HistoryEntry) -> HistoryEntryView {
-        use newt_common::vfs::ToUnix;
+        use newt_engine::vfs::ToUnix;
         // Prefer the formatted strings captured at push time so unmounted
         // VFSes still render meaningfully. The descriptor lookup only
         // determines whether the entry is still navigable.
@@ -1552,7 +1553,7 @@ impl Pane {
     /// [`EntrySet::All`] also those the hidden-file setting and the filter
     /// leave out. Each with the path of the file it stands for — the real
     /// file for an entry of a synthetic VFS such as search results.
-    pub fn listed_entries(&self, set: EntrySet) -> Vec<(VfsPath, newt_common::vfs::File)> {
+    pub fn listed_entries(&self, set: EntrySet) -> Vec<(VfsPath, newt_engine::vfs::File)> {
         let view_state = self.view_state.read();
         let files: Vec<&File> = match set {
             EntrySet::Listed => view_state.files.iter().collect(),
@@ -1656,7 +1657,7 @@ impl Pane {
     pub fn effective_selection_files(
         &self,
     ) -> (
-        Vec<newt_common::vfs::File>,
+        Vec<newt_engine::vfs::File>,
         std::collections::HashSet<String>,
     ) {
         let view_state = self.view_state.read();
@@ -1679,7 +1680,7 @@ impl Pane {
         (files, others)
     }
 
-    pub fn get_focused_file_info(&self) -> Option<newt_common::vfs::File> {
+    pub fn get_focused_file_info(&self) -> Option<newt_engine::vfs::File> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state
@@ -1827,7 +1828,7 @@ pub struct FileWindow {
 pub struct PaneBreadcrumb {
     pub label: String,
     pub path: VfsPath,
-    pub note: Option<newt_common::vfs::BreadcrumbNote>,
+    pub note: Option<newt_engine::vfs::BreadcrumbNote>,
 }
 
 /// A marquee or Shift+Alt+wheel selection in progress.
@@ -1889,7 +1890,7 @@ pub struct PaneViewState {
     /// Which metadata families the pane's VFS populates — the frontend
     /// filters the configured column set by these (no mode/user/group
     /// on S3, an Attr column only on Windows-shaped FSes).
-    pub metadata_traits: newt_common::vfs::MetadataTraits,
+    pub metadata_traits: newt_engine::vfs::MetadataTraits,
     pub breadcrumbs: Vec<PaneBreadcrumb>,
     /// Per-location badges from enrichers (branch indicator, …), in
     /// stable per-enricher order.
@@ -3069,10 +3070,10 @@ mod tests {
         fn descriptor(
             &self,
             vfs_id: VfsId,
-        ) -> Option<(&'static dyn newt_common::vfs::VfsDescriptor, Vec<u8>)> {
+        ) -> Option<(&'static dyn newt_engine::vfs::VfsDescriptor, Vec<u8>)> {
             let (_, type_name, meta, _) = self.0.iter().find(|m| m.0 == vfs_id)?;
             Some((
-                newt_common::vfs::registry::lookup_descriptor(type_name)?,
+                newt_engine::vfs::registry::lookup_descriptor(type_name)?,
                 meta.clone(),
             ))
         }

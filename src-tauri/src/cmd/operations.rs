@@ -1,8 +1,9 @@
-use newt_common::operation::{
+use newt_common::path::VfsPath;
+use newt_engine::operation::{
     ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
     ResolveIssueRequest, StartOperationRequest,
 };
-use newt_common::vfs::{File, VfsPath};
+use newt_engine::vfs::File;
 use tauri::Manager;
 
 use crate::GlobalContext;
@@ -16,7 +17,7 @@ use crate::main_window::{
 /// A name typed into a dialog, refused if joining it would leave the
 /// directory it's for.
 fn typed_name(name: &str) -> Result<(), Error> {
-    if newt_common::vfs::path::stays_below(name) {
+    if newt_common::path::stays_below(name) {
         Ok(())
     } else {
         Err(Error::Custom(format!("“{name}” isn't a name here")))
@@ -292,7 +293,7 @@ pub async fn apply_properties(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
     paths: Vec<VfsPath>,
-    patch: newt_common::vfs::PropertyPatch,
+    patch: newt_engine::vfs::PropertyPatch,
     recursive: bool,
     cross_mount_points: bool,
 ) -> Result<(), Error> {
@@ -851,7 +852,7 @@ pub async fn cmd_debug_run_test_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use newt_common::vfs::VfsId;
+    use newt_common::path::VfsId;
 
     fn at(path: &str) -> VfsPath {
         path.split('/')

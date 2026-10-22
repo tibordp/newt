@@ -1,0 +1,1675 @@
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use newt_common::path::{Path, PathBuf};
+
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use tokio::sync::mpsc;
+
+use crate::vfs::{
+    Breadcrumb, DisplayPathMatch, MountRequest, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata,
+    VfsSpaceInfo,
+};
+use crate::vfs::{File, Mode, Symlink};
+
+// ---------------------------------------------------------------------------
+// Mock entry model
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum MockEntry {
+    File {
+        content: Vec<u8>,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    },
+    Directory {
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    },
+    Symlink {
+        /// Flows straight into `File::symlink` / `FileDetails::symlink`.
+        target: Symlink,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Failure injection
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct FailureSpec {
+    pub path: PathBuf,
+    pub operation: &'static str, // e.g. "remove_file", "overwrite_async", ...
+    pub error: newt_common::Error,
+    pub remaining: Option<u32>, // None = permanent, Some(n) = fail n times then succeed
+}
+
+/// Shared between the vfs and its issued `MockRandomReader`s, which check
+/// "read_at" specs per call.
+fn check_failure_in(
+    failures: &Mutex<Vec<FailureSpec>>,
+    path: &Path,
+    operation: &str,
+) -> Option<newt_common::Error> {
+    let mut failures = failures.lock();
+    for spec in failures.iter_mut() {
+        if spec.path == *path && spec.operation == operation {
+            match &mut spec.remaining {
+                None => return Some(spec.error.clone()),
+                Some(0) => continue,
+                Some(n) => {
+                    *n -= 1;
+                    return Some(spec.error.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Config: which capabilities the mock VFS advertises
+// ---------------------------------------------------------------------------
+
+/// Where a `create_new` write finds out the destination exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MockRefusal {
+    /// When opening, as local files do.
+    AtOpen,
+    /// On finish, after every byte was written, as S3 does.
+    AtFinish,
+}
+
+#[derive(Debug, Clone)]
+pub struct MockVfsConfig {
+    pub can_read: bool,
+    /// Mimic object stores (S3): `read_range` starting at or past the
+    /// file size is an error, not an empty chunk.
+    pub strict_range_reads: bool,
+    pub can_overwrite: bool,
+    pub can_create_directory: bool,
+    pub can_create_symlink: bool,
+    pub can_set_metadata: bool,
+    pub can_remove: bool,
+    pub can_remove_tree: bool,
+    pub can_trash: bool,
+    pub has_symlinks: bool,
+    pub can_rename: bool,
+    pub can_copy_within: bool,
+    pub can_write_range: bool,
+    /// Off, directories are prefixes the way S3 lists them: `file_info`
+    /// still answers, but walkers classify roots from the parent listing.
+    pub can_stat_directories: bool,
+    /// Advertise `list_recursive`, served the way S3 does: every file
+    /// under the prefix and no directories at all, which the walker
+    /// synthesizes.
+    pub can_list_recursive: bool,
+    /// Time each `list_files` takes, so overlapping listings can be seen
+    /// overlapping (`MockVfs::max_concurrent_listings`).
+    pub list_latency: Option<std::time::Duration>,
+    /// Time each `read_at` of an `open_read_at` reader takes, so work that
+    /// reads a file a chunk at a time can be caught part-way.
+    pub read_latency: Option<std::time::Duration>,
+    /// How `create_new` is honoured by writes and `copy_within`; `None`
+    /// answers `NotSupported`.
+    pub create_new: Option<MockRefusal>,
+    /// `create_new` answers `NotSupported` for a size hint past this, or
+    /// none, as S3 does for anything larger than one request.
+    pub create_new_max_size: Option<u64>,
+    /// Offer `RenameOptions::no_replace`; off, it answers `NotSupported`.
+    pub rename_no_replace: bool,
+    /// Offer `exchange`; off, it answers `NotSupported`.
+    pub exchange: bool,
+}
+
+impl Default for MockVfsConfig {
+    fn default() -> Self {
+        Self {
+            can_read: true,
+            strict_range_reads: false,
+            can_overwrite: true,
+            can_create_directory: true,
+            can_create_symlink: true,
+            can_set_metadata: true,
+            can_remove: true,
+            can_remove_tree: true,
+            can_trash: true,
+            has_symlinks: true,
+            can_rename: true,
+            can_write_range: true,
+            can_copy_within: false,
+            can_stat_directories: true,
+            can_list_recursive: false,
+            list_latency: None,
+            read_latency: None,
+            create_new: Some(MockRefusal::AtOpen),
+            create_new_max_size: None,
+            rename_no_replace: true,
+            exchange: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockVfsDescriptor (leaked for 'static lifetime in tests)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct MockVfsDescriptor {
+    config: MockVfsConfig,
+}
+
+impl VfsDescriptor for MockVfsDescriptor {
+    fn type_name(&self) -> &'static str {
+        "mock"
+    }
+    fn display_name(&self) -> &'static str {
+        "Mock"
+    }
+    fn auto_mount_request(&self) -> Option<MountRequest> {
+        None
+    }
+    fn can_watch(&self) -> bool {
+        false
+    }
+    fn can_read(&self) -> bool {
+        self.config.can_read
+    }
+    fn can_overwrite(&self) -> bool {
+        self.config.can_overwrite
+    }
+    fn can_create_directory(&self) -> bool {
+        self.config.can_create_directory
+    }
+    fn can_create_symlink(&self) -> bool {
+        self.config.can_create_symlink
+    }
+    fn can_touch(&self) -> bool {
+        false
+    }
+    fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
+        self.config.can_write_range
+    }
+    fn can_set_metadata(&self) -> bool {
+        self.config.can_set_metadata
+    }
+    fn can_remove(&self) -> bool {
+        self.config.can_remove
+    }
+    fn can_remove_tree(&self) -> bool {
+        self.config.can_remove_tree
+    }
+    fn can_trash(&self) -> bool {
+        self.config.can_trash
+    }
+    fn has_symlinks(&self) -> bool {
+        self.config.has_symlinks
+    }
+    fn can_stat_directories(&self) -> bool {
+        self.config.can_stat_directories
+    }
+    fn can_list_recursive(&self) -> bool {
+        self.config.can_list_recursive
+    }
+    fn can_fs_stats(&self) -> bool {
+        false
+    }
+    fn can_rename(&self) -> bool {
+        self.config.can_rename
+    }
+    fn can_copy_within(&self) -> bool {
+        self.config.can_copy_within
+    }
+    fn can_hard_link(&self) -> bool {
+        false
+    }
+    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
+        crate::vfs::unix_display_path(path)
+    }
+    fn breadcrumbs(&self, _path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        Vec::new()
+    }
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockVfs
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct MockVfs {
+    /// Keyed by the canonical wire string of the in-VFS path
+    /// (`Path::as_wire_str`), so lookups are independent of host OS
+    /// separators and round-trip through the VFS path type.
+    entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
+    descriptor: &'static dyn VfsDescriptor,
+    strict_range_reads: bool,
+    trashed: Mutex<Vec<String>>,
+    /// Mimic a case-insensitive volume (NTFS, APFS-CI, exFAT): entries are
+    /// still stored and listed under their exact spelling, but lookups —
+    /// and `same_file` — fold ASCII case, so `/a/Foo` and `/a/foo` are one
+    /// file. Off by default: the mock is case-sensitive like ext4.
+    case_insensitive: bool,
+    /// Ordinal per path for `read_order`; empty means no order.
+    read_order: HashMap<String, u64>,
+    /// Modification times (ms) per path; absent means `None`.
+    modified: HashMap<String, i64>,
+    /// Paths opened through `open_read_async`, in call order.
+    opened: Mutex<Vec<String>>,
+    /// Paths asked about through `file_info`, in call order.
+    stats: Mutex<Vec<String>>,
+    create_new: Option<MockRefusal>,
+    create_new_max_size: Option<u64>,
+    rename_no_replace: bool,
+    exchange: bool,
+    /// Roots of other filesystems; empty means no entry reports a device.
+    mounts: Vec<String>,
+    /// Directories `is_package` answers yes for, by wire path.
+    packages: Vec<String>,
+    list_latency: Option<std::time::Duration>,
+    read_latency: Option<std::time::Duration>,
+    listings_in_flight: std::sync::atomic::AtomicUsize,
+    max_concurrent_listings: std::sync::atomic::AtomicUsize,
+}
+
+impl MockVfs {
+    pub fn builder() -> MockVfsBuilder {
+        MockVfsBuilder::new()
+    }
+
+    /// The device an entry reports: 1 for the root filesystem, 2.. for
+    /// each mount in builder order, `None` when no mounts are declared.
+    fn device_of(&self, path: &Path) -> Option<u64> {
+        if self.mounts.is_empty() {
+            return None;
+        }
+        let device = self
+            .mounts
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| path.starts_with(&PathBuf::from_wire_str(m)))
+            .max_by_key(|(_, m)| m.len())
+            .map_or(1, |(i, _)| i as u64 + 2);
+        Some(device)
+    }
+
+    /// Check if a failure should fire for the given path+operation.
+    /// Decrements remaining count; removes exhausted specs.
+    fn check_failure(&self, path: &Path, operation: &str) -> Option<newt_common::Error> {
+        check_failure_in(&self.failures, path, operation)
+    }
+
+    /// The key a requested path is stored under. Identity on a
+    /// case-sensitive mock; on a case-insensitive one, the *stored*
+    /// spelling of a case-variant match — a real case-insensitive volume
+    /// preserves the name it was created with and folds only the lookup.
+    /// Falls back to the requested string when nothing matches, so callers
+    /// still see a plain `NotFound`.
+    fn lookup_key(&self, path: &Path) -> String {
+        let requested = path.as_wire_str().to_string();
+        if !self.case_insensitive {
+            return requested;
+        }
+        let entries = self.entries.lock();
+        if entries.contains_key(&requested) {
+            return requested;
+        }
+        entries
+            .keys()
+            .find(|stored| stored.eq_ignore_ascii_case(&requested))
+            .cloned()
+            .unwrap_or(requested)
+    }
+
+    fn occupied(&self, path: &Path) -> bool {
+        key_exists(
+            &self.entries.lock(),
+            path.as_wire_str(),
+            self.case_insensitive,
+        )
+    }
+
+    /// `NotSupported` unless this `create_new` request is honoured.
+    fn check_create_new(
+        &self,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<Option<MockRefusal>, newt_common::Error> {
+        if !options.create_new {
+            return Ok(None);
+        }
+        let fits = self
+            .create_new_max_size
+            .is_none_or(|max| options.size_hint.is_some_and(|size| size <= max));
+        match self.create_new {
+            Some(refusal) if fits => Ok(Some(refusal)),
+            _ => Err(newt_common::Error::not_supported()),
+        }
+    }
+
+    // -- State inspection helpers --
+
+    /// Put a file at `path` from outside, as another writer would.
+    pub fn put_file(&self, path: &str, content: &[u8]) {
+        self.entries.lock().insert(
+            PathBuf::from_wire_str(path).as_wire_str().to_string(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode: 0o644,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+    }
+
+    /// Paths `file_info` was asked about under `prefix`.
+    pub fn stats_under(&self, prefix: &str) -> Vec<String> {
+        let prefix = PathBuf::from_wire_str(prefix);
+        self.stats
+            .lock()
+            .iter()
+            .filter(|p| PathBuf::from_wire_str(p).starts_with(&prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// Snapshot of all paths and their types, sorted.
+    pub fn inject_failure(&self, failure: FailureSpec) {
+        self.failures.lock().push(failure);
+    }
+
+    pub fn snapshot(&self) -> Vec<(PathBuf, &'static str)> {
+        self.entries
+            .lock()
+            .iter()
+            .map(|(p, e)| {
+                let kind = match e {
+                    MockEntry::File { .. } => "file",
+                    MockEntry::Directory { .. } => "dir",
+                    MockEntry::Symlink { .. } => "symlink",
+                };
+                (PathBuf::from_wire_str(p), kind)
+            })
+            .collect()
+    }
+
+    /// Read content of a file. Panics if not a file.
+    pub fn read_content(&self, path: &str) -> Vec<u8> {
+        let key = PathBuf::from_wire_str(path);
+        match self.entries.lock().get(key.as_wire_str()) {
+            Some(MockEntry::File { content, .. }) => content.clone(),
+            other => panic!("read_content: {:?} is {:?}, not a file", key, other),
+        }
+    }
+
+    /// The most `list_files` calls ever in progress at once.
+    pub fn max_concurrent_listings(&self) -> usize {
+        self.max_concurrent_listings
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Paths opened for streaming reads, in call order.
+    pub fn opened_reads(&self) -> Vec<PathBuf> {
+        self.opened
+            .lock()
+            .iter()
+            .map(|p| PathBuf::from_wire_str(p))
+            .collect()
+    }
+
+    /// Paths that were moved to the (simulated) trash, in call order.
+    pub fn trashed_paths(&self) -> Vec<PathBuf> {
+        self.trashed
+            .lock()
+            .iter()
+            .map(|p| PathBuf::from_wire_str(p))
+            .collect()
+    }
+
+    /// Check if path exists.
+    pub fn exists(&self, path: &str) -> bool {
+        self.entries
+            .lock()
+            .contains_key(PathBuf::from_wire_str(path).as_wire_str())
+    }
+
+    /// Get mode of a file/directory.
+    pub fn get_mode(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
+            Some(MockEntry::File { mode, .. }) | Some(MockEntry::Directory { mode, .. }) => {
+                Some(*mode)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get uid of a file/directory.
+    pub fn get_uid(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
+            Some(MockEntry::File { uid, .. }) | Some(MockEntry::Directory { uid, .. }) => {
+                Some(*uid)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get gid of a file/directory.
+    pub fn get_gid(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
+            Some(MockEntry::File { gid, .. }) | Some(MockEntry::Directory { gid, .. }) => {
+                Some(*gid)
+            }
+            _ => None,
+        }
+    }
+
+    fn list_children(&self, parent: &Path) -> Vec<File> {
+        let entries = self.entries.lock();
+        let mut children = Vec::new();
+        for (path_str, entry) in entries.iter() {
+            let path = PathBuf::from_wire_str(path_str);
+            let parent_matches = path.parent().map(Path::as_wire_str) == Some(parent.as_wire_str());
+            if parent_matches && path.as_wire_str() != parent.as_wire_str() {
+                let name = path.file_name().unwrap().to_string();
+                let (is_dir, symlink, size, mode, user, group) = match entry {
+                    MockEntry::File {
+                        content,
+                        mode,
+                        uid,
+                        gid,
+                    } => (
+                        false,
+                        None,
+                        Some(content.len() as u64),
+                        *mode,
+                        Some(crate::vfs::UserGroup::Id(*uid)),
+                        Some(crate::vfs::UserGroup::Id(*gid)),
+                    ),
+                    MockEntry::Directory { mode, uid, gid } => (
+                        true,
+                        None,
+                        None,
+                        *mode,
+                        Some(crate::vfs::UserGroup::Id(*uid)),
+                        Some(crate::vfs::UserGroup::Id(*gid)),
+                    ),
+                    MockEntry::Symlink { target } => {
+                        (false, Some(target.clone()), None, 0o777, None, None)
+                    }
+                };
+                children.push(File {
+                    attributes: None,
+                    name: name.clone(),
+                    size,
+                    allocated_size: None,
+                    device_id: self.device_of(&path),
+                    inode: None,
+                    hard_links: None,
+                    is_dir,
+                    is_hidden: name.starts_with('.'),
+                    symlink,
+                    user,
+                    group,
+                    mode: Some(Mode(mode)),
+                    modified: self.modified.get(path_str).copied(),
+                    accessed: None,
+                    created: None,
+                    key: None,
+                    source: None,
+                });
+            }
+        }
+        children
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vfs trait implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl Vfs for MockVfs {
+    fn descriptor(&self) -> &'static dyn VfsDescriptor {
+        self.descriptor
+    }
+
+    async fn list_files(
+        &self,
+        path: &Path,
+        _batch_tx: Option<mpsc::Sender<Vec<File>>>,
+    ) -> Result<crate::vfs::VfsFileList, newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "list_files") {
+            return Err(e);
+        }
+        if let Some(latency) = self.list_latency {
+            use std::sync::atomic::Ordering::Relaxed;
+            let now = self.listings_in_flight.fetch_add(1, Relaxed) + 1;
+            self.max_concurrent_listings.fetch_max(now, Relaxed);
+            tokio::time::sleep(latency).await;
+            self.listings_in_flight.fetch_sub(1, Relaxed);
+        }
+        // A link to a directory lists its target, as real listings do.
+        let linked = matches!(
+            self.entries.lock().get(path.as_wire_str()),
+            Some(MockEntry::Symlink { .. })
+        );
+        let target = if linked {
+            self.resolve_link(path).await?
+        } else {
+            path.to_owned()
+        };
+        let path = target.as_path();
+        match self.entries.lock().get(path.as_wire_str()) {
+            Some(MockEntry::Directory { .. }) => {}
+            None if path.is_root() => {} // root always exists implicitly
+            _ => {
+                return Err(newt_common::Error {
+                    kind: newt_common::ErrorKind::NotFound,
+                    message: format!("directory not found: {}", path),
+                });
+            }
+        }
+        Ok(self.list_children(path).into())
+    }
+
+    async fn poll_changes(&self, _path: &Path) -> Result<(), newt_common::Error> {
+        // Never returns in real usage; for tests just pend forever
+        std::future::pending().await
+    }
+
+    async fn fs_stats(
+        &self,
+        _path: &Path,
+    ) -> Result<Option<crate::vfs::FsStats>, newt_common::Error> {
+        Ok(None)
+    }
+
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "open_read_async") {
+            return Err(e);
+        }
+        self.opened.lock().push(path.as_wire_str().to_string());
+        match self.entries.lock().get(path.as_wire_str()) {
+            Some(MockEntry::File { content, .. }) => {
+                Ok(Box::new(std::io::Cursor::new(content.clone())))
+            }
+            _ => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            }),
+        }
+    }
+
+    async fn read_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: u64,
+    ) -> Result<crate::vfs::FileChunk, newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "read_range") {
+            return Err(e);
+        }
+        match self.entries.lock().get(path.as_wire_str()) {
+            Some(MockEntry::File { content, .. }) => {
+                if self.strict_range_reads && offset >= content.len() as u64 {
+                    return Err(newt_common::Error::custom(format!(
+                        "range start {} is beyond object size {}",
+                        offset,
+                        content.len()
+                    )));
+                }
+                let start = (offset as usize).min(content.len());
+                let end = (offset + length) as usize;
+                let data = content[start..end.min(content.len())].to_vec();
+                Ok(crate::vfs::FileChunk {
+                    data,
+                    offset,
+                    total_size: content.len() as u64,
+                })
+            }
+            _ => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            }),
+        }
+    }
+
+    async fn open_read_at(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn crate::vfs::VfsRandomReader>, newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "open_read_at") {
+            return Err(e);
+        }
+        let key = self.lookup_key(path);
+        if !matches!(self.entries.lock().get(&key), Some(MockEntry::File { .. })) {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            });
+        }
+        Ok(Box::new(MockRandomReader {
+            path: path.to_owned(),
+            key,
+            entries: self.entries.clone(),
+            failures: self.failures.clone(),
+            strict_range_reads: self.strict_range_reads,
+            latency: self.read_latency,
+        }))
+    }
+
+    /// Two entries per batch. Failure specs: `list_recursive` fires
+    /// before anything is sent, `list_recursive_page` before every batch
+    /// after the first.
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<crate::vfs::FlatEntry>>,
+    ) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(prefix, "list_recursive") {
+            return Err(e);
+        }
+        let entries: Vec<_> = self
+            .entries
+            .lock()
+            .iter()
+            .filter_map(|(key, entry)| {
+                let path = PathBuf::from_wire_str(key);
+                if path.as_wire_str() == prefix.as_wire_str() || !path.starts_with(prefix) {
+                    return None;
+                }
+                let name = path.file_name().unwrap_or_default().to_string();
+                let file = match entry {
+                    MockEntry::Directory { .. } => return None,
+                    MockEntry::File {
+                        content,
+                        mode,
+                        uid,
+                        gid,
+                    } => File {
+                        name,
+                        size: Some(content.len() as u64),
+                        device_id: self.device_of(&path),
+                        user: Some(crate::vfs::UserGroup::Id(*uid)),
+                        group: Some(crate::vfs::UserGroup::Id(*gid)),
+                        mode: Some(Mode(*mode)),
+                        is_dir: false,
+                        ..File::bare_dir("")
+                    },
+                    MockEntry::Symlink { target } => File {
+                        name,
+                        is_dir: false,
+                        symlink: Some(target.clone()),
+                        mode: Some(Mode(0o777)),
+                        ..File::bare_dir("")
+                    },
+                };
+                Some(crate::vfs::FlatEntry { path, file })
+            })
+            .collect();
+        for (i, batch) in entries.chunks(2).enumerate() {
+            if i > 0
+                && let Some(e) = self.check_failure(prefix, "list_recursive_page")
+            {
+                return Err(e);
+            }
+            if tx.send(batch.to_vec()).await.is_err() {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, newt_common::Error> {
+        self.stats.lock().push(path.as_wire_str().to_string());
+        if let Some(e) = self.check_failure(path, "file_info") {
+            return Err(e);
+        }
+        let name = path.file_name().unwrap_or_default().to_string();
+        let key = self.lookup_key(path);
+        let is_link = matches!(
+            self.entries.lock().get(&key),
+            Some(MockEntry::Symlink { .. })
+        );
+        if follow && is_link {
+            let target = self.resolve_link(path).await?;
+            let mut file = self.file_info(&target, true).await?;
+            file.name = name;
+            return Ok(file);
+        }
+        match self.entries.lock().get(&key) {
+            Some(MockEntry::File {
+                content,
+                mode,
+                uid,
+                gid,
+            }) => Ok(File {
+                attributes: None,
+                name: name.clone(),
+                size: Some(content.len() as u64),
+                allocated_size: None,
+                device_id: self.device_of(path),
+                inode: None,
+                hard_links: None,
+                is_dir: false,
+                is_hidden: name.starts_with('.'),
+                symlink: None,
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
+                mode: Some(Mode(*mode)),
+                modified: self.modified.get(&key).copied(),
+                accessed: None,
+                created: None,
+                key: None,
+                source: None,
+            }),
+            Some(MockEntry::Directory { mode, uid, gid }) => Ok(File {
+                attributes: None,
+                name: name.clone(),
+                size: None,
+                allocated_size: None,
+                device_id: self.device_of(path),
+                inode: None,
+                hard_links: None,
+                is_dir: true,
+                is_hidden: name.starts_with('.'),
+                symlink: None,
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
+                mode: Some(Mode(*mode)),
+                modified: self.modified.get(&key).copied(),
+                accessed: None,
+                created: None,
+                key: None,
+                source: None,
+            }),
+            Some(MockEntry::Symlink { target }) => Ok(File {
+                attributes: None,
+                name: name.clone(),
+                size: None,
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
+                is_dir: false,
+                is_hidden: name.starts_with('.'),
+                symlink: Some(target.clone()),
+                user: None,
+                group: None,
+                mode: Some(Mode(0o777)),
+                modified: self.modified.get(&key).copied(),
+                accessed: None,
+                created: None,
+                key: None,
+                source: None,
+            }),
+            None => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            }),
+        }
+    }
+
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, newt_common::Error> {
+        let refusal = self.check_create_new(options)?;
+        let attributes = crate::vfs::attributes::WriteOptions {
+            create_new: false,
+            ..options.clone()
+        };
+        if !attributes.is_default() {
+            return Err(newt_common::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(path, "overwrite_async") {
+            return Err(e);
+        }
+        if refusal == Some(MockRefusal::AtOpen) {
+            if self.occupied(path) {
+                return Err(already_exists(path));
+            }
+            // The exclusive open creates the file, as O_EXCL does.
+            self.entries.lock().insert(
+                path.as_wire_str().to_string(),
+                MockEntry::File {
+                    content: Vec::new(),
+                    mode: 0o644,
+                    uid: 1000,
+                    gid: 1000,
+                },
+            );
+        }
+        Ok(Box::new(MockWriter {
+            buf: Vec::new(),
+            path: path.as_wire_str().to_string(),
+            entries: self.entries.clone(),
+            refuse_existing: refusal == Some(MockRefusal::AtFinish),
+            case_insensitive: self.case_insensitive,
+            failures: self.failures.clone(),
+            exclusive: refusal == Some(MockRefusal::AtOpen),
+        }))
+    }
+
+    async fn create_directory(&self, path: &Path) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "create_directory") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        if entries.contains_key(path.as_wire_str()) {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::AlreadyExists,
+                message: format!("already exists: {}", path),
+            });
+        }
+        entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        Ok(())
+    }
+
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(link, "create_symlink") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        entries.insert(
+            link.as_wire_str().to_string(),
+            MockEntry::Symlink {
+                target: Symlink::Target(target.to_string()),
+            },
+        );
+        Ok(())
+    }
+
+    async fn touch(&self, _path: &Path) -> Result<(), newt_common::Error> {
+        Err(newt_common::Error::not_supported())
+    }
+
+    async fn truncate(&self, _path: &Path) -> Result<(), newt_common::Error> {
+        Err(newt_common::Error::not_supported())
+    }
+
+    async fn write_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), newt_common::Error> {
+        if !self.descriptor.can_write_range() {
+            return Err(newt_common::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(path, "write_range") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        match entries.get_mut(path.as_wire_str()) {
+            Some(MockEntry::File { content, .. }) => {
+                let end = offset as usize + data.len();
+                if end > content.len() {
+                    return Err(newt_common::Error::custom(
+                        "write_range past the end of the file",
+                    ));
+                }
+                content[offset as usize..end].copy_from_slice(data);
+                Ok(())
+            }
+            _ => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            }),
+        }
+    }
+
+    async fn remove_file(&self, path: &Path) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "remove_file") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        match entries.get(path.as_wire_str()) {
+            Some(MockEntry::File { .. }) | Some(MockEntry::Symlink { .. }) => {
+                entries.remove(path.as_wire_str());
+                Ok(())
+            }
+            Some(MockEntry::Directory { .. }) => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::IsADirectory,
+                message: format!("is a directory: {}", path),
+            }),
+            None => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            }),
+        }
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "remove_dir") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        // Check that it's a directory
+        match entries.get(path.as_wire_str()) {
+            Some(MockEntry::Directory { .. }) => {}
+            _ => {
+                return Err(newt_common::Error {
+                    kind: newt_common::ErrorKind::NotADirectory,
+                    message: format!("not a directory: {}", path),
+                });
+            }
+        }
+        // Check not empty
+        let has_children = entries.keys().any(|k| {
+            let kp = PathBuf::from_wire_str(k);
+            kp.as_wire_str() != path.as_wire_str()
+                && kp.parent().map(Path::as_wire_str) == Some(path.as_wire_str())
+        });
+        if has_children {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::DirectoryNotEmpty,
+                message: format!("directory not empty: {}", path),
+            });
+        }
+        entries.remove(path.as_wire_str());
+        Ok(())
+    }
+
+    async fn remove_tree(&self, path: &Path) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "remove_tree") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        let to_remove: Vec<String> = entries
+            .keys()
+            .filter(|k| PathBuf::from_wire_str(k).starts_with(path))
+            .cloned()
+            .collect();
+        if to_remove.is_empty() {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            });
+        }
+        for k in to_remove {
+            entries.remove(&k);
+        }
+        Ok(())
+    }
+
+    async fn trash_item(&self, path: &Path) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "trash_item") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        let to_remove: Vec<String> = entries
+            .keys()
+            .filter(|k| PathBuf::from_wire_str(k).starts_with(path))
+            .cloned()
+            .collect();
+        if to_remove.is_empty() {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            });
+        }
+        for k in to_remove {
+            entries.remove(&k);
+        }
+        self.trashed.lock().push(path.as_wire_str().to_string());
+        Ok(())
+    }
+
+    async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, newt_common::Error> {
+        match self.entries.lock().get(path.as_wire_str()) {
+            Some(MockEntry::File { mode, uid, gid, .. })
+            | Some(MockEntry::Directory { mode, uid, gid, .. }) => Ok(VfsMetadata {
+                permissions: Some(*mode),
+                uid: Some(*uid),
+                gid: Some(*gid),
+                ..Default::default()
+            }),
+            Some(MockEntry::Symlink { .. }) => Ok(VfsMetadata::default()),
+            None => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            }),
+        }
+    }
+
+    async fn set_metadata(
+        &self,
+        path: &Path,
+        meta: &VfsMetadata,
+    ) -> Result<(), newt_common::Error> {
+        if let Some(e) = self.check_failure(path, "set_metadata") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        match entries.get_mut(path.as_wire_str()) {
+            Some(MockEntry::File { mode, uid, gid, .. })
+            | Some(MockEntry::Directory { mode, uid, gid, .. }) => {
+                if let Some(p) = meta.permissions {
+                    *mode = p;
+                }
+                if let Some(u) = meta.uid {
+                    *uid = u;
+                }
+                if let Some(g) = meta.gid {
+                    *gid = g;
+                }
+                Ok(())
+            }
+            Some(MockEntry::Symlink { .. }) => Ok(()),
+            None => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            }),
+        }
+    }
+
+    async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, newt_common::Error> {
+        if self.read_order.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            paths
+                .iter()
+                .map(|p| {
+                    self.read_order
+                        .get(p.as_wire_str())
+                        .copied()
+                        .unwrap_or(u64::MAX)
+                })
+                .collect(),
+        ))
+    }
+
+    async fn available_space(&self, _path: &Path) -> Result<VfsSpaceInfo, newt_common::Error> {
+        Ok(VfsSpaceInfo {
+            total_bytes: None,
+            used_bytes: None,
+            available_bytes: None,
+        })
+    }
+
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, newt_common::Error> {
+        if let Some(e) = self.check_failure(b, "same_file") {
+            return Err(e);
+        }
+        let (a, b) = (self.lookup_key(a), self.lookup_key(b));
+        let entries = self.entries.lock();
+        Ok(a == b && entries.contains_key(&a))
+    }
+
+    async fn is_package(&self, path: &Path) -> Result<bool, newt_common::Error> {
+        let key = self.lookup_key(path);
+        Ok(self.packages.contains(&key))
+    }
+
+    async fn exchange(&self, a: &Path, b: &Path) -> Result<(), newt_common::Error> {
+        if !self.exchange {
+            return Err(newt_common::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(a, "exchange") {
+            return Err(e);
+        }
+        let (a, b) = (
+            PathBuf::from_wire_str(&self.lookup_key(a)),
+            PathBuf::from_wire_str(&self.lookup_key(b)),
+        );
+        let mut entries = self.entries.lock();
+        // Each subtree, by its path below its root.
+        let take = |entries: &mut BTreeMap<String, MockEntry>, root: &PathBuf| {
+            let keys: Vec<String> = entries
+                .keys()
+                .filter(|k| PathBuf::from_wire_str(k).starts_with(root))
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .map(|k| {
+                    let entry = entries.remove(&k).expect("listed");
+                    let suffix = PathBuf::from_wire_str(&k)
+                        .strip_prefix(root)
+                        .expect("below the root")
+                        .to_string();
+                    (suffix, entry)
+                })
+                .collect::<Vec<_>>()
+        };
+        let under_a = take(&mut entries, &a);
+        let under_b = take(&mut entries, &b);
+        if under_a.is_empty() || under_b.is_empty() {
+            for (root, items) in [(&a, under_a), (&b, under_b)] {
+                for (suffix, entry) in items {
+                    entries.insert(root.join(&suffix).as_wire_str().to_string(), entry);
+                }
+            }
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {} or {}", a, b),
+            });
+        }
+        for (root, items) in [(&b, under_a), (&a, under_b)] {
+            for (suffix, entry) in items {
+                let mut path = root.clone();
+                for seg in PathBuf::from_wire_str(&suffix).components() {
+                    path.push(seg);
+                }
+                entries.insert(path.as_wire_str().to_string(), entry);
+            }
+        }
+        Ok(())
+    }
+
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &crate::vfs::attributes::RenameOptions,
+    ) -> Result<(), newt_common::Error> {
+        if options.no_replace {
+            if !self.rename_no_replace {
+                return Err(newt_common::Error::not_supported());
+            }
+            if let Some(e) = self.check_failure(from, "rename_no_replace") {
+                return Err(e);
+            }
+            if self.occupied(to) {
+                return Err(already_exists(to));
+            }
+        }
+        if let Some(e) = self.check_failure(from, "rename") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        // Collect all entries under `from` (including `from` itself)
+        let to_move: Vec<(String, MockEntry)> = entries
+            .iter()
+            .filter(|(k, _)| PathBuf::from_wire_str(k).starts_with(from))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if to_move.is_empty() {
+            return Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", from),
+            });
+        }
+        for (old_key, entry) in &to_move {
+            entries.remove(old_key);
+            let old_path = PathBuf::from_wire_str(old_key);
+            let suffix = old_path.strip_prefix(from).unwrap();
+            // Re-root the (possibly empty) suffix under `to`, component-wise
+            // so separators stay canonical.
+            let mut new_path = to.to_owned();
+            for seg in PathBuf::from_wire_str(suffix).components() {
+                new_path.push(seg);
+            }
+            entries.insert(new_path.as_wire_str().to_string(), entry.clone());
+        }
+        Ok(())
+    }
+
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<(), newt_common::Error> {
+        let refusal = self.check_create_new(options)?;
+        let attributes = crate::vfs::attributes::WriteOptions {
+            create_new: false,
+            ..options.clone()
+        };
+        if !attributes.is_default() {
+            return Err(newt_common::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(from, "copy_within") {
+            return Err(e);
+        }
+        if refusal.is_some() && self.occupied(to) {
+            return Err(already_exists(to));
+        }
+        let mut entries = self.entries.lock();
+        match entries.get(from.as_wire_str()).cloned() {
+            Some(entry) => {
+                entries.insert(to.as_wire_str().to_string(), entry);
+                Ok(())
+            }
+            None => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("not found: {}", from),
+            }),
+        }
+    }
+
+    async fn hard_link(&self, _link: &Path, _target: &Path) -> Result<(), newt_common::Error> {
+        Err(newt_common::Error::not_supported())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writer: captures bytes, writes to entries map on finish (or drop, on abort)
+// ---------------------------------------------------------------------------
+
+type EntryMap = Arc<Mutex<BTreeMap<String, MockEntry>>>;
+
+struct MockWriter {
+    buf: Vec<u8>,
+    /// Canonical wire-string key of the target path.
+    path: String,
+    entries: EntryMap,
+    /// `create_new` refused on finish.
+    refuse_existing: bool,
+    case_insensitive: bool,
+    /// Checked for "finish" specs on the target path.
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
+    /// Created by the exclusive open and not yet finished: dropped now, it
+    /// is removed, as the local writer does.
+    exclusive: bool,
+}
+
+fn key_exists(
+    entries: &BTreeMap<String, MockEntry>,
+    requested: &str,
+    case_insensitive: bool,
+) -> bool {
+    entries.contains_key(requested)
+        || (case_insensitive && entries.keys().any(|k| k.eq_ignore_ascii_case(requested)))
+}
+
+fn already_exists(path: &Path) -> newt_common::Error {
+    newt_common::Error {
+        kind: newt_common::ErrorKind::AlreadyExists,
+        message: format!("already exists: {}", path),
+    }
+}
+
+impl MockWriter {
+    fn commit(&mut self) {
+        let content = std::mem::take(&mut self.buf);
+        self.entries.lock().insert(
+            self.path.clone(),
+            MockEntry::File {
+                content,
+                mode: 0o644,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+    }
+}
+
+impl Drop for MockWriter {
+    fn drop(&mut self) {
+        if self.exclusive {
+            self.entries.lock().remove(&self.path);
+        } else if !self.buf.is_empty() {
+            self.commit();
+        }
+    }
+}
+
+#[async_trait]
+impl VfsAsyncWriter for MockWriter {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, newt_common::Error> {
+        self.buf.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    async fn finish(mut self: Box<Self>) -> Result<(), newt_common::Error> {
+        if let Some(e) = check_failure_in(
+            &self.failures,
+            &PathBuf::from_wire_str(&self.path),
+            "finish",
+        ) {
+            self.buf.clear();
+            return Err(e);
+        }
+        if self.refuse_existing
+            && key_exists(&self.entries.lock(), &self.path, self.case_insensitive)
+        {
+            self.buf.clear();
+            return Err(already_exists(&PathBuf::from_wire_str(&self.path)));
+        }
+        self.commit();
+        // Clear buf so Drop doesn't double-insert
+        self.buf.clear();
+        self.exclusive = false;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockRandomReader
+// ---------------------------------------------------------------------------
+
+/// Reads live entry content (not a snapshot) so failure specs and content
+/// edits made after open still apply; "read_at" specs fire per call.
+struct MockRandomReader {
+    path: PathBuf,
+    key: String,
+    entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
+    strict_range_reads: bool,
+    latency: Option<std::time::Duration>,
+}
+
+#[async_trait]
+impl crate::vfs::VfsRandomReader for MockRandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, newt_common::Error> {
+        if let Some(e) = check_failure_in(&self.failures, &self.path, "read_at") {
+            return Err(e);
+        }
+        if let Some(latency) = self.latency {
+            tokio::time::sleep(latency).await;
+        }
+        match self.entries.lock().get(&self.key) {
+            Some(MockEntry::File { content, .. }) => {
+                if self.strict_range_reads && offset >= content.len() as u64 {
+                    return Err(newt_common::Error::custom(format!(
+                        "range start {} is beyond object size {}",
+                        offset,
+                        content.len()
+                    )));
+                }
+                let start = (offset as usize).min(content.len());
+                let end = (offset + len) as usize;
+                Ok(content[start..end.min(content.len())].to_vec())
+            }
+            _ => Err(newt_common::Error {
+                kind: newt_common::ErrorKind::NotFound,
+                message: format!("file not found: {}", self.path),
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Builder
+// ---------------------------------------------------------------------------
+
+pub struct MockVfsBuilder {
+    entries: BTreeMap<String, MockEntry>,
+    failures: Vec<FailureSpec>,
+    config: MockVfsConfig,
+    case_insensitive: bool,
+    read_order: HashMap<String, u64>,
+    modified: HashMap<String, i64>,
+    mounts: Vec<String>,
+    packages: Vec<String>,
+}
+
+impl MockVfsBuilder {
+    pub fn new() -> Self {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            PathBuf::root().as_wire_str().to_string(),
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        Self {
+            entries,
+            failures: Vec::new(),
+            config: MockVfsConfig::default(),
+            case_insensitive: false,
+            read_order: HashMap::new(),
+            modified: HashMap::new(),
+            mounts: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
+
+    /// Make the directory the root of another filesystem: it and
+    /// everything under it report a device of their own, and every other
+    /// entry reports the root's.
+    /// Have `is_package` answer yes for the directory at `path`.
+    pub fn package(mut self, path: &str) -> Self {
+        self.packages
+            .push(PathBuf::from_wire_str(path).as_wire_str().to_string());
+        self
+    }
+
+    pub fn mount_point(mut self, path: &str) -> Self {
+        self = self.dir(path);
+        self.mounts
+            .push(PathBuf::from_wire_str(path).as_wire_str().to_string());
+        self
+    }
+
+    /// Give the paths a `read_order` position, like an archive whose
+    /// entries sit in stream order.
+    pub fn read_order(mut self, paths: &[&str]) -> Self {
+        for (i, p) in paths.iter().enumerate() {
+            self.read_order.insert(
+                PathBuf::from_wire_str(p).as_wire_str().to_string(),
+                i as u64,
+            );
+        }
+        self
+    }
+
+    /// Set the entry's modification time, in milliseconds.
+    pub fn modified(mut self, path: &str, ms: i64) -> Self {
+        self.modified
+            .insert(PathBuf::from_wire_str(path).as_wire_str().to_string(), ms);
+        self
+    }
+
+    /// Treat entry names case-insensitively, like NTFS or a stock APFS
+    /// volume. See [`MockVfs::case_insensitive`].
+    pub fn case_insensitive(mut self) -> Self {
+        self.case_insensitive = true;
+        self
+    }
+
+    pub fn config(mut self, config: MockVfsConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn dir(mut self, path: &str) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn dir_with_mode(mut self, path: &str, mode: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::Directory {
+                mode,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn dir_with_owner(mut self, path: &str, mode: u32, uid: u32, gid: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::Directory { mode, uid, gid },
+        );
+        self
+    }
+
+    pub fn file(mut self, path: &str, content: &[u8]) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode: 0o644,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn file_with_mode(mut self, path: &str, content: &[u8], mode: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn file_with_owner(
+        mut self,
+        path: &str,
+        content: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
+        self.entries.insert(
+            path.as_wire_str().to_string(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode,
+                uid,
+                gid,
+            },
+        );
+        self
+    }
+
+    pub fn symlink(mut self, link: &str, target: &str) -> Self {
+        let link = PathBuf::from_wire_str(link);
+        self.ensure_parents(&link);
+        self.entries.insert(
+            link.as_wire_str().to_string(),
+            MockEntry::Symlink {
+                target: Symlink::Target(target.to_string()),
+            },
+        );
+        self
+    }
+
+    /// A link whose target can't be read (`Symlink::Unknown`).
+    pub fn unreadable_symlink(mut self, link: &str) -> Self {
+        let link = PathBuf::from_wire_str(link);
+        self.ensure_parents(&link);
+        self.entries.insert(
+            link.as_wire_str().to_string(),
+            MockEntry::Symlink {
+                target: Symlink::Unknown,
+            },
+        );
+        self
+    }
+
+    pub fn failure(mut self, spec: FailureSpec) -> Self {
+        self.failures.push(spec);
+        self
+    }
+
+    fn ensure_parents(&mut self, path: &Path) {
+        let mut current = path.parent();
+        while let Some(p) = current {
+            if p.is_root() || self.entries.contains_key(p.as_wire_str()) {
+                break;
+            }
+            self.entries.insert(
+                p.as_wire_str().to_string(),
+                MockEntry::Directory {
+                    mode: 0o755,
+                    uid: 1000,
+                    gid: 1000,
+                },
+            );
+            current = p.parent();
+        }
+    }
+
+    pub fn build(self) -> Arc<MockVfs> {
+        let strict_range_reads = self.config.strict_range_reads;
+        let create_new = self.config.create_new;
+        let create_new_max_size = self.config.create_new_max_size;
+        let rename_no_replace = self.config.rename_no_replace;
+        let exchange = self.config.exchange;
+        let list_latency = self.config.list_latency;
+        let read_latency = self.config.read_latency;
+        let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
+            config: self.config,
+        }));
+
+        Arc::new(MockVfs {
+            entries: Arc::new(Mutex::new(self.entries)),
+            failures: Arc::new(Mutex::new(self.failures)),
+            descriptor,
+            strict_range_reads,
+            trashed: Mutex::new(Vec::new()),
+            case_insensitive: self.case_insensitive,
+            read_order: self.read_order,
+            modified: self.modified,
+            opened: Mutex::new(Vec::new()),
+            stats: Mutex::new(Vec::new()),
+            create_new,
+            create_new_max_size,
+            rename_no_replace,
+            exchange,
+            mounts: self.mounts,
+            packages: self.packages,
+            list_latency,
+            read_latency,
+            listings_in_flight: std::sync::atomic::AtomicUsize::new(0),
+            max_concurrent_listings: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+}

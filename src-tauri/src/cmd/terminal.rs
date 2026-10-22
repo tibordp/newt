@@ -1,4 +1,4 @@
-use newt_common::terminal::TerminalHandle;
+use newt_engine::terminal::TerminalHandle;
 use shell_quote::Quote;
 
 use crate::common::{Error, RawArgs, RawBytes};

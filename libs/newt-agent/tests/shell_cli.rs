@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
-use newt_common::filesystem::ByteStream;
-use newt_common::shell_control::{
+use newt_common::path::VfsPath;
+use newt_engine::filesystem::ByteStream;
+use newt_engine::shell_control::{
     ControlRequest, ControlResponse, ControlResult, ENV_SOCK, ShellControlHandler, ShellIntegration,
 };
-use newt_common::vfs::VfsPath;
 
 struct MockHandler;
 
@@ -24,7 +24,7 @@ impl ShellControlHandler for MockHandler {
             }
             ControlRequest::Navigate { .. } => Ok(ControlResponse::Ok),
             ControlRequest::ResolveFile { .. } => Ok(ControlResponse::ResolvedFile(VfsPath::root(
-                newt_common::vfs::VfsId::ROOT,
+                newt_common::path::VfsId::ROOT,
             ))),
             _ => Err("unhandled".into()),
         }

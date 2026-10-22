@@ -1,4 +1,4 @@
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
 use tauri::{Manager, WebviewWindow, Window};
 
 use super::{EDITOR_WINDOW_SIZE, VIEWER_WINDOW_SIZE, show_prewarmed};

@@ -1,5 +1,5 @@
-use newt_common::operation::{OperationId, OperationRequest};
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
+use newt_engine::operation::{OperationId, OperationRequest};
 
 use crate::common::{Error, RawArgs};
 use crate::main_window::pane::{PARENT_KEY, Pane};
@@ -306,7 +306,7 @@ pub async fn external_drop(
         .map(|p| {
             VfsPath::new(
                 host_vfs,
-                newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(p)),
+                newt_common::path::PathBuf::from_native(std::path::Path::new(p)),
             )
         })
         .collect();

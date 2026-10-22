@@ -205,7 +205,7 @@ function sortEntries(entries: File[], sorting: Sorting): File[] {
   });
 }
 
-/// Mirrors `unix_breadcrumbs` in newt-common.
+/// Mirrors `unix_breadcrumbs` in newt-engine.
 function breadcrumbs(vfsId: number, path: string, rootLabel: string) {
   const segs = path.split("/").filter(Boolean);
   let acc = "";

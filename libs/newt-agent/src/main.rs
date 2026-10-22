@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use log::info;
-use newt_common::{
-    Error,
+use newt_common::Error;
+use newt_engine::{
     agent_resolver::AgentResolver,
     api::{
         EnricherDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
@@ -12,11 +12,13 @@ use newt_common::{
     enrich::{Enrichers, du::DuEnricher, git::GitEnricher, package::PackageEnricher},
     hot_paths,
     operation::OperationContext,
-    rpc::{Communicator, DispatcherExt},
     shell::LocalShellService,
-    vfs::mount::{SftpAskpass, VfsRegistryManager},
-    vfs::{LocalVfs, VfsRegistry, VfsRegistryFs},
+    vfs::{
+        LocalVfs, VfsRegistry, VfsRegistryFs,
+        mount::{SftpAskpass, VfsRegistryManager},
+    },
 };
+use newt_rpc::{Communicator, DispatcherExt};
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -114,7 +116,7 @@ fn connect_askpass(endpoint: &str) -> std::io::Result<std::fs::File> {
 /// SSH_ASKPASS mode: connect to the parent process over the askpass
 /// endpoint, send the prompt, read the response, print it to stdout for SSH.
 fn run_askpass(sock_path: &str) -> i32 {
-    use newt_common::askpass::{AskpassRequest, AskpassResponse, PromptType};
+    use newt_engine::askpass::{AskpassRequest, AskpassResponse, PromptType};
 
     let prompt_type_str = std::env::var("SSH_ASKPASS_PROMPT").unwrap_or_default();
     let prompt = std::env::args().nth(1).unwrap_or_default();
@@ -138,11 +140,11 @@ fn run_askpass(sock_path: &str) -> i32 {
         prompt,
     };
 
-    if newt_common::askpass::write_msg(&mut stream, &request).is_err() {
+    if newt_engine::askpass::write_msg(&mut stream, &request).is_err() {
         return 1;
     }
 
-    let response: AskpassResponse = match newt_common::askpass::read_msg(&mut stream) {
+    let response: AskpassResponse = match newt_engine::askpass::read_msg(&mut stream) {
         Ok(r) => r,
         Err(_) => return 1,
     };
@@ -170,8 +172,8 @@ fn main() {
                 .is_some_and(|stem| stem == "newt")
         })
         .unwrap_or(false);
-    if newt_common::shell_control::is_cli_invocation(invoked_as_newt, false) {
-        std::process::exit(newt_common::shell_control::run_cli());
+    if newt_engine::shell_control::is_cli_invocation(invoked_as_newt, false) {
+        std::process::exit(newt_engine::shell_control::run_cli());
     }
 
     // Askpass mode short-circuits before any heavy init.
@@ -183,7 +185,7 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     if args.macos_elevated
-        && let Err(e) = newt_common::elevation::macos::adopt()
+        && let Err(e) = newt_engine::elevation::macos::adopt()
     {
         eprintln!("failed to become root: {}", e);
         std::process::exit(1);
@@ -192,7 +194,7 @@ fn main() {
     // Before the runtime spawns its workers — `set_var` is not thread-safe.
     // A Mac agent gets its locale here for the same reason the host does; a
     // Linux one already has one from pam_env and this is a no-op.
-    newt_common::locale::ensure_locale();
+    newt_engine::locale::ensure_locale();
 
     // A panic means this process can't be trusted any more: end it, so the
     // host sees its connection close, rather than run on with a task dead
@@ -229,7 +231,7 @@ async fn run_agent(args: Args) -> Result<(), Error> {
     ) = match pipe {
         #[cfg(windows)]
         Some(name) => {
-            let client = newt_common::elevation::windows::connect(&name).await?;
+            let client = newt_engine::elevation::windows::connect(&name).await?;
             let (r, w) = tokio::io::split(client);
             (Box::new(r), Box::new(w))
         }
@@ -272,7 +274,7 @@ async fn run_agent(args: Args) -> Result<(), Error> {
     // RPC-backed resolver: serves its own triple from the running
     // executable, fetches foreign triples (nested agent mounts) from the
     // host, and reports the host's agent hash.
-    let resolver = Arc::new(newt_common::agent_resolver::Remote::new(
+    let resolver = Arc::new(newt_engine::agent_resolver::Remote::new(
         host_communicator.clone(),
     ));
     let askpass_binary = resolver.find_local_agent_binary()?;
@@ -297,7 +299,7 @@ async fn run_agent(args: Args) -> Result<(), Error> {
         fs: Arc::new(VfsRegistryFs::new(registry.clone())),
     });
     let shell_integration =
-        match newt_common::shell_control::ShellIntegration::start(&cli_binary, shell_handler) {
+        match newt_engine::shell_control::ShellIntegration::start(&cli_binary, shell_handler) {
             Ok(si) => Some(si),
             Err(e) => {
                 log::warn!("shell integration disabled: {e}");
@@ -308,7 +310,7 @@ async fn run_agent(args: Args) -> Result<(), Error> {
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
         shell_integration: shell_integration.clone(),
-        spooler: newt_common::spool::Spooler::new(Default::default()),
+        spooler: newt_engine::spool::Spooler::new(Default::default()),
     });
 
     info!("agent started, entering RPC loop");
@@ -319,8 +321,8 @@ async fn run_agent(args: Args) -> Result<(), Error> {
         // LocalProgressSink applies them to MainWindowState. The agent's
         // sink owns a fire-and-forget mpsc forwarder task spawned when
         // constructed.
-        let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
-            Arc::new(newt_common::vfs::RemoteProgressSink::new(outbox.clone()));
+        let progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink> =
+            Arc::new(newt_engine::vfs::RemoteProgressSink::new(outbox.clone()));
         let vfs_manager = VfsRegistryManager::new_with_host_communicator(
             registry.clone(),
             host_communicator.clone(),
@@ -335,19 +337,19 @@ async fn run_agent(args: Args) -> Result<(), Error> {
         FilesystemDispatcher::new(filesystem, outbox.clone())
             .chain(ShellServiceDispatcher::new(LocalShellService))
             .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
-            .chain(newt_common::api::QuickOpenDispatcher::new(
+            .chain(newt_engine::api::QuickOpenDispatcher::new(
                 outbox.clone(),
-                Arc::new(newt_common::quick_open::QuickOpen::new(registry.clone())),
+                Arc::new(newt_engine::quick_open::QuickOpen::new(registry.clone())),
             ))
             .chain(TerminalDispatcher::new(
-                newt_common::terminal::Local::with_shell_integration(shell_integration),
+                newt_engine::terminal::Local::with_shell_integration(shell_integration),
                 outbox.clone(),
             ))
             .chain(OperationDispatcher::new(outbox.clone(), op_context))
             .chain(VfsMountDispatcher::new(vfs_manager))
             .chain(HotPathsDispatcher::new(hot_paths::Local::new()))
-            .chain(newt_common::api::DiscoveryDispatcher::new(
-                newt_common::discovery::Local::new(Vec::new()),
+            .chain(newt_engine::api::DiscoveryDispatcher::new(
+                newt_engine::discovery::Local::new(Vec::new()),
             ))
     });
 
@@ -366,20 +368,20 @@ async fn run_agent(args: Args) -> Result<(), Error> {
 /// live), so file bytes never round-trip through the host.
 struct AgentShellHandler {
     host: Arc<std::sync::OnceLock<Communicator>>,
-    fs: Arc<dyn newt_common::filesystem::Filesystem>,
+    fs: Arc<dyn newt_engine::filesystem::Filesystem>,
 }
 
 #[async_trait::async_trait]
-impl newt_common::shell_control::ShellControlHandler for AgentShellHandler {
+impl newt_engine::shell_control::ShellControlHandler for AgentShellHandler {
     async fn control(
         &self,
-        req: newt_common::shell_control::ControlRequest,
-    ) -> newt_common::shell_control::ControlResult {
+        req: newt_engine::shell_control::ControlRequest,
+    ) -> newt_engine::shell_control::ControlResult {
         let Some(host) = self.host.get() else {
             return Err("session not connected".to_string());
         };
-        host.invoke::<_, newt_common::shell_control::ControlResult>(
-            newt_common::api::API_HOST_SHELL_CONTROL,
+        host.invoke::<_, newt_engine::shell_control::ControlResult>(
+            newt_engine::api::API_HOST_SHELL_CONTROL,
             &req,
         )
         .await
@@ -388,9 +390,9 @@ impl newt_common::shell_control::ShellControlHandler for AgentShellHandler {
 
     async fn read_file(
         &self,
-        path: newt_common::vfs::VfsPath,
-    ) -> Result<newt_common::filesystem::ByteStream, String> {
-        Ok(newt_common::filesystem::file_reader_stream(
+        path: newt_common::path::VfsPath,
+    ) -> Result<newt_engine::filesystem::ByteStream, String> {
+        Ok(newt_engine::filesystem::file_reader_stream(
             self.fs.clone(),
             path,
         ))

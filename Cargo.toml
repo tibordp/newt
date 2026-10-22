@@ -2,20 +2,25 @@
 resolver = "2"
 members = [
     "src-tauri/",
-    "libs/pty-process/",
+    "libs/newt-common/",
     "libs/newt-agent/",
     "libs/newt-archive/",
-    "libs/newt-common/",
+    "libs/newt-engine/",
+    "libs/newt-rpc/",
     "libs/newt-disc/",
     "xtask/",
 ]
-# Plain `cargo build` builds only the app shell + common lib. The agent is
+# Plain `cargo build` builds only the app shell + its libs. The agent is
 # built per-target (incl. both Windows arches) and laid out into `agents/`
-# via `cargo xtask agents`; pty-process is Unix-only; xtask is a build tool.
+# via `cargo xtask agents`; xtask is a build tool.
 # None of those belong in a default host build.
 default-members = [
     "src-tauri/",
     "libs/newt-common/",
+    "libs/newt-rpc/",
+    "libs/newt-engine/",
+    "libs/newt-archive/",
+    "libs/newt-disc/",
 ]
 
 # LZMA decoding and 7z key derivation are tens of times slower unoptimized,

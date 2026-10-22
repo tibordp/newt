@@ -50,10 +50,11 @@ backend and a React/TypeScript frontend.
 |---|---|
 | `src/` | Frontend: panes, terminal, dialogs, viewer and editor windows |
 | `src-tauri/` | Tauri backend: windows, session state, command handlers, preferences |
-| `libs/newt-common/` | Shared core: the traits and both implementations, RPC, VFS backends, operations |
+| `libs/newt-engine/` | Shared core: the traits and both implementations, VFS backends, operations, terminals |
+| `libs/newt-rpc/` | The binary RPC protocol between the app and its agents |
+| `libs/newt-common/` | Foundational types: `Error` and platform-independent VFS paths |
 | `libs/newt-agent/` | The agent binary for remote, elevated and WSL sessions |
 | `libs/newt-archive/`, `libs/newt-disc/` | zip and 7z readers, zip / 7z / tar writers; ISO 9660 and UDF readers |
-| `libs/pty-process/` | Vendored PTY crate (Unix) |
 | `xtask/` | Build tasks: agents, TypeScript bindings, third-party notices |
 | `packaging/` | deb, rpm, Arch, AppImage, macOS and MSI packaging |
 | `docs/scenes/` | Scripted scenes behind the documentation screenshots |

@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use log::warn;
-use newt_common::vfs::path::PathBuf as VfsPathBuf;
+use newt_common::path::PathBuf as VfsPathBuf;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 

@@ -7,15 +7,15 @@
 
 use std::sync::Arc;
 
-use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::{ByteStream, file_reader_stream};
-use newt_common::operation::{CopyOptions, OperationId, OperationRequest};
-use newt_common::rpc::Dispatcher;
-use newt_common::shell_control::{
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::filesystem::Filesystem;
+use newt_engine::filesystem::{ByteStream, file_reader_stream};
+use newt_engine::operation::{CopyOptions, OperationId, OperationRequest};
+use newt_engine::shell_control::{
     CommandListEntry, ControlRequest, ControlResponse, ControlResult, EntryKind, ListEntry,
     PaneSelector, SelectMode, ShellControlHandler,
 };
-use newt_common::vfs::{VfsId, VfsPath};
+use newt_rpc::Dispatcher;
 
 use crate::GlobalContext;
 use crate::main_window::{MainWindowContext, Outcome, PaneHandle};
@@ -61,11 +61,11 @@ pub struct ShellControlDispatcher {
 
 #[async_trait::async_trait]
 impl Dispatcher for ShellControlDispatcher {
-    async fn invoke(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
-        if api != newt_common::api::API_HOST_SHELL_CONTROL {
+    async fn invoke(&self, api: newt_rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
+        if api != newt_engine::api::API_HOST_SHELL_CONTROL {
             return None;
         }
-        let request: ControlRequest = newt_common::api::decode(&req);
+        let request: ControlRequest = newt_engine::api::decode(&req);
         let result: ControlResult =
             if !self.host_access && matches!(request, ControlRequest::Command { .. }) {
                 Err(
@@ -79,7 +79,7 @@ impl Dispatcher for ShellControlDispatcher {
                     Err(e) => Err(e),
                 }
             };
-        Some(bytes::Bytes::from(newt_common::api::encode(&result)))
+        Some(bytes::Bytes::from(newt_engine::api::encode(&result)))
     }
 }
 
@@ -290,7 +290,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             if details.is_ok_and(|d| {
                 d.mode
                     .as_ref()
-                    .is_some_and(newt_common::vfs::Mode::is_special)
+                    .is_some_and(newt_engine::vfs::Mode::is_special)
             }) {
                 return Err(err(crate::cmd::window::not_regular(ctx, &resolved)));
             }
@@ -357,7 +357,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
     }
 }
 
-fn list_entry(ctx: &MainWindowContext, path: &VfsPath, file: newt_common::vfs::File) -> ListEntry {
+fn list_entry(ctx: &MainWindowContext, path: &VfsPath, file: newt_engine::vfs::File) -> ListEntry {
     let kind = if file.symlink.is_some() {
         EntryKind::Symlink
     } else if file.is_dir {
@@ -365,16 +365,16 @@ fn list_entry(ctx: &MainWindowContext, path: &VfsPath, file: newt_common::vfs::F
     } else if file
         .mode
         .as_ref()
-        .is_some_and(newt_common::vfs::Mode::is_special)
+        .is_some_and(newt_engine::vfs::Mode::is_special)
     {
         EntryKind::Special
     } else {
         EntryKind::File
     };
-    let owner = |owner: Option<newt_common::vfs::UserGroup>| {
+    let owner = |owner: Option<newt_engine::vfs::UserGroup>| {
         owner.map(|owner| match owner {
-            newt_common::vfs::UserGroup::Name(name) => name,
-            newt_common::vfs::UserGroup::Id(id) => id.to_string(),
+            newt_engine::vfs::UserGroup::Name(name) => name,
+            newt_engine::vfs::UserGroup::Id(id) => id.to_string(),
         })
     };
     ListEntry {

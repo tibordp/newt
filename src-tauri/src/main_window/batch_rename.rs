@@ -6,10 +6,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use newt_common::batch_rename::plan::{self, Problem};
-use newt_common::batch_rename::rule::{CompiledRule, Rule};
-use newt_common::operation::BatchRenameFolder;
-use newt_common::vfs::{PathStyle, VfsPath};
+use newt_common::path::VfsPath;
+use newt_engine::batch_rename::plan::{self, Problem};
+use newt_engine::batch_rename::rule::{CompiledRule, Rule};
+use newt_engine::operation::BatchRenameFolder;
+use newt_engine::vfs::PathStyle;
 use parking_lot::Mutex;
 
 use super::pane::Pane;
@@ -501,8 +502,8 @@ fn utf16_len(text: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use newt_common::vfs::VfsId;
-    use newt_common::vfs::path::PathBuf;
+    use newt_common::path::PathBuf;
+    use newt_common::path::VfsId;
 
     /// Two folders, the second's rows after the first's: messages must
     /// name the other entry of the *same* folder.

@@ -2,7 +2,8 @@
 //! drives a filesystem has are asked of it when needed (`Vfs::roots`), so
 //! nothing here keeps them current.
 
-use newt_common::vfs::{RootInfo, VfsPath};
+use newt_common::path::VfsPath;
+use newt_engine::vfs::RootInfo;
 
 use crate::main_window::MainWindowContext;
 
@@ -125,7 +126,7 @@ pub async fn open_unmap_confirmation(
     let volume = drive_root(roots, &drive)
         .and_then(|r| r.volume)
         .ok_or_else(|| Error::Custom(format!("No volume information for {drive}")))?;
-    if volume.kind != newt_common::vfs::VolumeKind::Network {
+    if volume.kind != newt_engine::vfs::VolumeKind::Network {
         return Err(Error::Custom(format!(
             "{drive} is not a mapped network drive"
         )));

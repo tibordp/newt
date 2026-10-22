@@ -28,7 +28,7 @@ pub mod terminal;
 pub mod vfs;
 pub mod window;
 
-use newt_common::vfs::UserGroup;
+use newt_engine::vfs::UserGroup;
 use tauri::Manager;
 use tauri::WebviewWindow;
 use tauri::Wry;
@@ -466,9 +466,9 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<crate::viewer::dissect::DissectChildrenAdded>()
         .typ::<crate::viewer::dissect::DissectTaskProgress>()
         .typ::<crate::editor::EditorStateWire>()
-        .typ::<newt_common::vfs::File>()
-        .typ::<newt_common::vfs::FileList>()
-        .typ::<newt_common::vfs::FsStats>()
+        .typ::<newt_engine::vfs::File>()
+        .typ::<newt_engine::vfs::FileList>()
+        .typ::<newt_engine::vfs::FsStats>()
         .typ::<crate::main_window::AskpassPrompt>()
         .typ::<crate::main_window::DeleteConfirmMode>()
         .typ::<crate::main_window::DndData>()
@@ -481,8 +481,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<crate::main_window::OperationStatus>()
         .typ::<crate::main_window::UserCommandPrompt>()
         .typ::<crate::main_window::VfsTarget>()
-        .typ::<newt_common::vfs::MetadataTraits>()
-        .typ::<newt_common::vfs::VfsProgress>()
+        .typ::<newt_engine::vfs::MetadataTraits>()
+        .typ::<newt_engine::vfs::VfsProgress>()
         .typ::<crate::main_window::pane::HistoryEntryView>()
         .typ::<crate::main_window::session::ConnectionStatus>()
         .typ::<crate::main_window::DisplayOptionsInner>()

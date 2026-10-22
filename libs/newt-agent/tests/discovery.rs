@@ -5,9 +5,9 @@
 
 use tokio::io::BufReader;
 
-use newt_common::connect::make_stream;
-use newt_common::discovery::DiscoveryProvider;
-use newt_common::rpc::Communicator;
+use newt_engine::connect::make_stream;
+use newt_engine::discovery::DiscoveryProvider;
+use newt_rpc::Communicator;
 
 #[tokio::test]
 async fn full_session_agent_serves_discovery() {
@@ -35,7 +35,7 @@ async fn full_session_agent_serves_discovery() {
     let stream = make_stream(BufReader::new(stdout), stdin);
     let communicator = Communicator::new(stream);
 
-    let provider = newt_common::discovery::Remote::new(communicator);
+    let provider = newt_engine::discovery::Remote::new(communicator);
 
     let hosts = provider.ssh_hosts().await.unwrap();
     let testbox = hosts

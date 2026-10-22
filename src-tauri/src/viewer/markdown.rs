@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use dom_query::{Document, NodeRef};
-use newt_common::vfs::path::{Path, PathBuf};
+use newt_common::path::{Path, PathBuf};
 
 /// A node of a rendered document.
 #[derive(Debug, PartialEq, serde::Serialize, specta::Type)]

@@ -19,8 +19,8 @@ const DARWIN: &[&str] = &["aarch64-apple-darwin", "x86_64-apple-darwin"];
 const WINDOWS: &[&str] = &["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"];
 
 /// Agent file name for a triple. Mirrors
-/// `newt_common::agent_resolver::agent_file_name` — kept in sync by hand
-/// so this build tool doesn't have to compile the whole common crate.
+/// `newt_engine::agent_resolver::agent_file_name` — kept in sync by hand
+/// so this build tool doesn't have to compile the whole engine crate.
 fn agent_file_name(triple: &str) -> &'static str {
     if triple.contains("windows") {
         "newt-agent.exe"

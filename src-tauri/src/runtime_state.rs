@@ -117,14 +117,14 @@ impl CopyMoveDefaults {
     /// What the Copy dialog shows before anything is remembered: the
     /// operation's defaults with the platform's own choice of attributes.
     /// Paste and drops, which have no dialog, copy with these.
-    pub fn stock() -> newt_common::operation::CopyOptions {
+    pub fn stock() -> newt_engine::operation::CopyOptions {
         Self::default().seed()
     }
 
     /// The remembered toggles laid over the operation's own defaults.
-    pub fn seed(&self) -> newt_common::operation::CopyOptions {
-        let base = newt_common::operation::CopyOptions::default();
-        newt_common::operation::CopyOptions {
+    pub fn seed(&self) -> newt_engine::operation::CopyOptions {
+        let base = newt_engine::operation::CopyOptions::default();
+        newt_engine::operation::CopyOptions {
             preserve_timestamps: self.preserve_timestamps.unwrap_or(base.preserve_timestamps),
             preserve_permissions: self
                 .preserve_permissions

@@ -1,0 +1,27 @@
+pub mod agent_resolver;
+pub mod api;
+pub mod askpass;
+pub mod batch_rename;
+pub mod connect;
+pub mod discovery;
+pub mod elevation;
+pub mod enrich;
+pub mod filesystem;
+pub mod find;
+pub mod hot_paths;
+pub mod locale;
+pub mod operation;
+#[cfg(windows)]
+pub mod pipe;
+pub mod proc;
+pub mod quick_open;
+pub mod shell;
+pub mod shell_control;
+pub mod spool;
+pub mod terminal;
+pub mod vfs;
+#[cfg(windows)]
+pub mod win_proc;
+
+#[cfg(test)]
+mod test_support;

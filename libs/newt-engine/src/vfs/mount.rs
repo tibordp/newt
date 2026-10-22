@@ -1,0 +1,320 @@
+//! The mount subsystem: the mount/unmount wire types, the
+//! `VfsManager` trait with its local (`VfsRegistryManager`) and RPC-proxy
+//! (`VfsManagerRemote`) implementations, and the `MountContext` dependency
+//! bundle handed to per-VFS `mount` helpers.
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::filesystem::Filesystem;
+use newt_common::Error;
+use newt_rpc::Communicator;
+
+use super::s3::S3Credentials;
+use super::{
+    NoopProgressSink, ProgressReporter, ScopedReporter, Vfs, VfsDescriptor, VfsProgressSink,
+    VfsRegistry, search,
+};
+use newt_common::path::VfsId;
+use newt_common::path::VfsPath;
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub enum MountRequest {
+    S3 {
+        region: Option<String>,
+        /// When set, the VFS is scoped to this bucket (root = bucket contents).
+        /// When None, root lists all buckets.
+        bucket: Option<String>,
+        #[serde(default)]
+        credentials: S3Credentials,
+    },
+    Sftp {
+        host: String,
+    },
+    Archive {
+        origin: VfsPath,
+        format: super::archive::ArchiveFormat,
+    },
+    /// Browse into an ISO 9660 / UDF disc image file.
+    Disc {
+        origin: VfsPath,
+    },
+    Search {
+        root: VfsPath,
+        params: Box<search::SearchParams>,
+    },
+    /// Expose the requesting side's own filesystem (the client-local FS
+    /// in a remote session). `mount_meta` is supplied by the requester —
+    /// only the owner can describe its FS, and the resulting `RemoteVfs`
+    /// can't derive it (its `mount_meta()` is sync, no RPC).
+    Remote {
+        mount_meta: Vec<u8>,
+    },
+    /// Spawn an FS-only sub-agent over a transport (SSH, docker, …) and
+    /// mount its local filesystem. See `vfs::agent`.
+    Agent {
+        spec: crate::connect::SpawnSpec,
+        /// Transport kind shown as the VFS display name, e.g. `Docker`.
+        kind: String,
+        /// Mount target shown as the VFS label, e.g. the container name.
+        label: String,
+    },
+}
+
+/// How many leading bytes [`sniff_mount_request`] looks at.
+pub const SNIFF_LEN: u64 = super::disc::DISC_SNIFF_LEN;
+
+/// The mount request a file's first [`SNIFF_LEN`] bytes call for — an
+/// archive reader or a disc image — or `None` when nothing there is
+/// recognisable.
+pub fn sniff_mount_request(header: &[u8], origin: VfsPath) -> Option<MountRequest> {
+    if let Some(format) = super::archive::sniff_format(header) {
+        Some(MountRequest::Archive { origin, format })
+    } else if super::disc::is_disc_image(header) {
+        Some(MountRequest::Disc { origin })
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountResponse {
+    pub vfs_id: VfsId,
+    pub type_name: String,
+    pub mount_meta: Vec<u8>,
+    pub origin: Option<VfsPath>,
+}
+
+/// Client-side descriptor + metadata for a mounted VFS.
+pub struct MountedVfsInfo {
+    pub vfs_id: VfsId,
+    pub descriptor: &'static dyn VfsDescriptor,
+    pub mount_meta: Vec<u8>,
+    pub origin: Option<VfsPath>,
+}
+
+#[async_trait::async_trait]
+pub trait VfsManager: Send + Sync {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error>;
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error>;
+}
+
+pub struct VfsManagerRemote {
+    communicator: Communicator,
+}
+
+impl VfsManagerRemote {
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl VfsManager for VfsManagerRemote {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
+        let ret: Result<MountResponse, Error> = self
+            .communicator
+            .invoke(crate::api::API_MOUNT_VFS, &request)
+            .await?;
+        Ok(ret?)
+    }
+
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_UNMOUNT_VFS, &vfs_id)
+            .await?;
+        Ok(ret?)
+    }
+}
+
+/// Shared state passed to per-VFS `mount` helpers. Bundles the registry
+/// (needed by archive mounts to resolve their upstream), the host
+/// communicator and pending-stream map (needed by the Remote VFS), the
+/// SFTP askpass configuration (binary path + provider, used by SFTP),
+/// and a generic askpass provider (used by encrypted-archive mounts).
+/// Any VFS may ignore fields it doesn't need.
+pub struct MountContext<'a> {
+    pub registry: &'a VfsRegistry,
+    pub host_communicator: &'a std::sync::OnceLock<Communicator>,
+    pub sftp_askpass: Option<&'a SftpAskpass>,
+    pub askpass_provider: Option<&'a Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Resolves agent binaries for spawn-style agent mounts (`None` ⇒
+    /// such mounts are rejected).
+    pub agent_resolver: Option<&'a Arc<dyn crate::agent_resolver::AgentResolver>>,
+    /// Extra PATH entries for transport binary resolution on agent mounts.
+    pub extra_path: &'a [String],
+    /// Per-mount progress reporter, scoped to the `VfsId` the manager
+    /// is about to assign to this mount. VFSes that report progress
+    /// (e.g. SearchVfs) clone the inner `Arc` and call `report()`
+    /// without ever needing to know their own id.
+    pub progress_reporter: &'a Arc<dyn ProgressReporter>,
+}
+
+/// Askpass configuration used by SFTP (and any future SSH-spawning VFS).
+#[derive(Clone)]
+pub struct SftpAskpass {
+    /// Path to the agent binary to set as `SSH_ASKPASS` (its
+    /// `NEWT_ASKPASS_SOCK` mode connects to the listener spawned for
+    /// `provider`).
+    pub askpass_binary: std::path::PathBuf,
+    pub provider: Arc<dyn crate::askpass::AskpassProvider>,
+}
+
+pub struct VfsRegistryManager {
+    registry: Arc<VfsRegistry>,
+    /// When set, allows mounting a Remote VFS that proxies calls back to
+    /// the host. Used by the agent in remote sessions.
+    host_communicator: Arc<std::sync::OnceLock<Communicator>>,
+    /// SFTP askpass configuration. When `None`, SFTP mounts inherit the
+    /// process environment with no special password handling.
+    sftp_askpass: Option<SftpAskpass>,
+    /// Generic askpass provider used for prompts that aren't tied to
+    /// SFTP's `SSH_ASKPASS` plumbing — currently encrypted-archive
+    /// passwords. When set with `with_sftp_askpass`, this is also
+    /// populated from the SFTP askpass's provider.
+    askpass_provider: Option<Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Sink used to build a per-mount `ScopedReporter`. Defaults to a
+    /// no-op so manager construction outside of a real session (tests,
+    /// agent boot before the outbox is wired, etc.) keeps working.
+    progress_sink: Arc<dyn VfsProgressSink>,
+    /// Resolves agent binaries for spawn-style agent mounts. When `None`,
+    /// `MountRequest::Agent` is rejected.
+    agent_resolver: Option<Arc<dyn crate::agent_resolver::AgentResolver>>,
+    /// Extra PATH entries for resolving transport binaries (docker, ssh, …)
+    /// on spawn-style agent mounts. Host sessions populate this from
+    /// preferences; the agent's ambient PATH is used otherwise.
+    extra_path: Vec<String>,
+}
+
+impl VfsRegistryManager {
+    pub fn new(registry: Arc<VfsRegistry>) -> Self {
+        Self {
+            registry,
+            host_communicator: Arc::new(std::sync::OnceLock::new()),
+            sftp_askpass: None,
+            askpass_provider: None,
+            progress_sink: Arc::new(NoopProgressSink),
+            agent_resolver: None,
+            extra_path: Vec::new(),
+        }
+    }
+
+    pub fn new_with_host_communicator(
+        registry: Arc<VfsRegistry>,
+        host_communicator: Arc<std::sync::OnceLock<Communicator>>,
+    ) -> Self {
+        Self {
+            registry,
+            host_communicator,
+            sftp_askpass: None,
+            askpass_provider: None,
+            progress_sink: Arc::new(NoopProgressSink),
+            agent_resolver: None,
+            extra_path: Vec::new(),
+        }
+    }
+
+    pub fn with_sftp_askpass(mut self, askpass: SftpAskpass) -> Self {
+        // Mirror the provider into the generic slot so encrypted-archive
+        // mounts get an askpass for free wherever SFTP already has one.
+        if self.askpass_provider.is_none() {
+            self.askpass_provider = Some(askpass.provider.clone());
+        }
+        self.sftp_askpass = Some(askpass);
+        self
+    }
+
+    pub fn with_askpass_provider(
+        mut self,
+        provider: Arc<dyn crate::askpass::AskpassProvider>,
+    ) -> Self {
+        self.askpass_provider = Some(provider);
+        self
+    }
+
+    pub fn with_progress_sink(mut self, sink: Arc<dyn VfsProgressSink>) -> Self {
+        self.progress_sink = sink;
+        self
+    }
+
+    pub fn with_agent_resolver(
+        mut self,
+        resolver: Arc<dyn crate::agent_resolver::AgentResolver>,
+    ) -> Self {
+        self.agent_resolver = Some(resolver);
+        self
+    }
+
+    pub fn with_extra_path(mut self, extra_path: Vec<String>) -> Self {
+        self.extra_path = extra_path;
+        self
+    }
+}
+
+#[async_trait::async_trait]
+impl VfsManager for VfsRegistryManager {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
+        // Allocate the id up front so the mount gets a progress reporter
+        // already scoped to its final VfsId. The id isn't visible until
+        // `insert` below, so a failed mount just leaves it unused.
+        let vfs_id = self.registry.allocate_id();
+        let progress_reporter: Arc<dyn ProgressReporter> =
+            Arc::new(ScopedReporter::new(self.progress_sink.clone(), vfs_id));
+        let ctx = MountContext {
+            registry: &self.registry,
+            host_communicator: &self.host_communicator,
+            sftp_askpass: self.sftp_askpass.as_ref(),
+            askpass_provider: self.askpass_provider.as_ref(),
+            agent_resolver: self.agent_resolver.as_ref(),
+            extra_path: &self.extra_path,
+            progress_reporter: &progress_reporter,
+        };
+
+        let vfs: Arc<dyn Vfs> = match request {
+            MountRequest::S3 {
+                region,
+                bucket,
+                credentials,
+            } => super::S3Vfs::mount(region, bucket, credentials, &ctx).await?,
+            MountRequest::Sftp { host } => super::SftpVfs::mount(host, &ctx).await?,
+            MountRequest::Remote { mount_meta } => super::RemoteVfs::mount(&ctx, mount_meta)?,
+            MountRequest::Agent { spec, kind, label } => {
+                super::agent::mount(spec, kind, label, &ctx).await?
+            }
+            MountRequest::Archive { origin, format } => {
+                super::archive::mount(origin, format, &ctx).await?
+            }
+            MountRequest::Disc { origin } => super::disc::mount(origin, &ctx).await?,
+            MountRequest::Search { root, params } => {
+                // Content matching runs `Filesystem::find_in_file`; the
+                // registry-backed impl makes search inside a SearchVfs's
+                // source follow registry redirects.
+                let file_reader: Arc<dyn Filesystem> =
+                    Arc::new(super::VfsRegistryFs::new(self.registry.clone()));
+                search::mount(root, *params, file_reader, &ctx).await?
+            }
+        };
+
+        let mount_meta = vfs.mount_meta();
+        let type_name = vfs.descriptor().type_name().to_string();
+        let origin = vfs.origin().cloned();
+        self.registry.insert(vfs_id, vfs);
+        log::info!("mounted {} VFS as vfs_id={:?}", type_name, vfs_id);
+
+        Ok(MountResponse {
+            vfs_id,
+            type_name,
+            mount_meta,
+            origin,
+        })
+    }
+
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
+        self.registry
+            .unmount(vfs_id)
+            .map(|_| ())
+            .ok_or_else(|| Error::custom(format!("cannot unmount VFS {}", vfs_id)))
+    }
+}

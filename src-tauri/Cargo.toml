@@ -31,6 +31,8 @@ mime_guess = "2"
 kamadak-exif = "0.6"
 parking_lot = "0.12"
 newt-common = { path = "../libs/newt-common" }
+newt-rpc = { path = "../libs/newt-rpc" }
+newt-engine = { path = "../libs/newt-engine" }
 fillyfoal = { git = "https://github.com/tibordp/fillyfoal" }
 tokio = { version = "1", features = ["full"] }
 libc = "0.2"
@@ -67,7 +69,6 @@ dom_query = "0.28"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs", "hostname"] }
-pty-process = { path = "../libs/pty-process" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -163,5 +164,5 @@ custom-protocol = ["tauri/custom-protocol"]
 # payload) even off their target OS, so `cargo xtask gen-bindings` emits a
 # host-independent `bindings.ts`. Never enabled for shipping builds.
 specta-bindings = []
-# See newt-common's feature of the same name.
-elevate-agent-copy = ["newt-common/elevate-agent-copy"]
+# See newt-engine's feature of the same name.
+elevate-agent-copy = ["newt-engine/elevate-agent-copy"]

@@ -9,7 +9,7 @@
 //! friends reach `IContextMenu2/3` (without that, "Open with" and
 //! "Send to" submenus come up empty).
 
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
 
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};

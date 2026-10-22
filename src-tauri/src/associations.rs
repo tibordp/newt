@@ -670,9 +670,9 @@ impl Associations {
 impl BrowseFormat {
     pub fn mount_request(
         self,
-        origin: newt_common::vfs::VfsPath,
-    ) -> newt_common::vfs::MountRequest {
-        use newt_common::vfs::{ArchiveFormat, MountRequest};
+        origin: newt_common::path::VfsPath,
+    ) -> newt_engine::vfs::MountRequest {
+        use newt_engine::vfs::{ArchiveFormat, MountRequest};
         let format = match self {
             BrowseFormat::Disc => return MountRequest::Disc { origin },
             BrowseFormat::Zip => ArchiveFormat::Zip,

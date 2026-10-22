@@ -4084,6 +4084,8 @@ dependencies = [
  "mime_guess",
  "minijinja",
  "newt-common",
+ "newt-engine",
+ "newt-rpc",
  "nix",
  "notify",
  "objc",
@@ -4096,7 +4098,6 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "pretty_env_logger",
- "pty-process",
  "regex",
  "schemars 1.2.2",
  "serde",
@@ -4139,6 +4140,8 @@ dependencies = [
  "futures",
  "log",
  "newt-common",
+ "newt-engine",
+ "newt-rpc",
  "pretty_env_logger",
  "tempfile",
  "tokio",
@@ -4171,6 +4174,26 @@ dependencies = [
 name = "newt-common"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "specta",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "newt-disc"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+]
+
+[[package]]
+name = "newt-engine"
+version = "0.1.0"
+dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
@@ -4179,7 +4202,6 @@ dependencies = [
  "aws-types",
  "bincode",
  "blake3",
- "byteorder",
  "bytes",
  "caseless",
  "clap",
@@ -4205,7 +4227,9 @@ dependencies = [
  "log",
  "memchr",
  "newt-archive",
+ "newt-common",
  "newt-disc",
+ "newt-rpc",
  "nix",
  "notify",
  "nucleo-matcher",
@@ -4215,7 +4239,6 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "plist",
- "pty-process",
  "quick-xml",
  "regex",
  "serde",
@@ -4223,10 +4246,8 @@ dependencies = [
  "serde_json",
  "specta",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tokio-duplex",
- "tokio-stream",
  "tokio-util",
  "unicode-normalization",
  "url",
@@ -4239,10 +4260,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "newt-disc"
+name = "newt-rpc"
 version = "0.1.0"
 dependencies = [
- "flate2",
+ "async-trait",
+ "bincode",
+ "byteorder",
+ "bytes",
+ "futures",
+ "log",
+ "newt-common",
+ "parking_lot",
+ "serde",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5206,15 +5237,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "pty-process"
-version = "0.3.0"
-dependencies = [
- "libc",
- "nix",
- "tokio",
 ]
 
 [[package]]

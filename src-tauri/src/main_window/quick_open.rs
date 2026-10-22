@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use newt_common::quick_open::{QuickOpenOptions, QuickOpenUpdate};
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
+use newt_engine::quick_open::{QuickOpenOptions, QuickOpenUpdate};
 use tokio::sync::{mpsc, watch};
 
 use super::{MainWindowContext, ModalData, ModalDataKind};

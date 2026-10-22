@@ -1,4 +1,4 @@
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;

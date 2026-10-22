@@ -381,7 +381,7 @@ pub fn connection_target_for(
 /// for VFS kinds (S3, SFTP) and non-spawn targets. The transport kind
 /// becomes the VFS display name and the target its label, so the selector
 /// reads e.g. "Docker (web-1)" rather than an ambiguous "Remote".
-pub fn agent_mount_request_for(kind: &ConnectionKind) -> Option<newt_common::vfs::MountRequest> {
+pub fn agent_mount_request_for(kind: &ConnectionKind) -> Option<newt_engine::vfs::MountRequest> {
     let (kind_name, target) = match kind {
         ConnectionKind::Ssh { host, .. } => ("SSH", host.clone()),
         ConnectionKind::Docker {
@@ -426,7 +426,7 @@ pub fn agent_mount_request_for(kind: &ConnectionKind) -> Option<newt_common::vfs
     };
     match connection_target_for(kind)?.0 {
         crate::main_window::ConnectionTarget::Spawn(spec) => {
-            Some(newt_common::vfs::MountRequest::Agent {
+            Some(newt_engine::vfs::MountRequest::Agent {
                 spec,
                 kind: kind_name.to_string(),
                 label: target,
@@ -709,11 +709,11 @@ pub async fn connect_recent(
 pub async fn mount_into_pane(
     ctx: &crate::main_window::MainWindowContext,
     pane_handle: crate::main_window::PaneHandle,
-    request: newt_common::vfs::MountRequest,
+    request: newt_engine::vfs::MountRequest,
 ) -> Result<(), Error> {
     ctx.clear_mount_log();
     let response = ctx.mount_vfs(request).await?;
-    let vfs_path = newt_common::vfs::VfsPath::root(response.vfs_id);
+    let vfs_path = newt_common::path::VfsPath::root(response.vfs_id);
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();

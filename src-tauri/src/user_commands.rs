@@ -1,6 +1,6 @@
-use newt_common::operation::{OperationRequest, StartOperationRequest};
-use newt_common::shell::ShellFlavor;
-use newt_common::vfs::VfsPath;
+use newt_common::path::VfsPath;
+use newt_engine::operation::{OperationRequest, StartOperationRequest};
+use newt_engine::shell::ShellFlavor;
 
 use crate::GlobalContext;
 use crate::common::Error;
@@ -293,7 +293,7 @@ fn setup_template_env(
 /// Paths are rendered by `format`, which is what Copy Path gives.
 fn build_template_context(
     pane_path: &VfsPath,
-    effective_files: &[&newt_common::vfs::File],
+    effective_files: &[&newt_engine::vfs::File],
     format: &dyn Fn(&VfsPath) -> String,
 ) -> (
     minijinja::Value,
@@ -350,7 +350,7 @@ fn render_template(
     template_str: &str,
     pane_path: &VfsPath,
     other_dir: &str,
-    effective_files: &[&newt_common::vfs::File],
+    effective_files: &[&newt_engine::vfs::File],
     format: &dyn Fn(&VfsPath) -> String,
     prompt_responses: Option<&[String]>,
     confirm_responses: Option<&[bool]>,
@@ -421,16 +421,16 @@ fn selection_keys(pane_path: &VfsPath, selection: &[VfsPath]) -> std::collection
 fn shell_flavor(ctx: &MainWindowContext) -> Result<ShellFlavor, Error> {
     let style = ctx
         .vfs_info()?
-        .descriptor(newt_common::vfs::VfsId::ROOT)
-        .map(|(_, meta)| newt_common::vfs::PathStyle::from_mount_meta(&meta))
-        .unwrap_or(newt_common::vfs::PathStyle::Unix);
+        .descriptor(newt_common::path::VfsId::ROOT)
+        .map(|(_, meta)| newt_engine::vfs::PathStyle::from_mount_meta(&meta))
+        .unwrap_or(newt_engine::vfs::PathStyle::Unix);
     Ok(ShellFlavor::of(style))
 }
 
 fn collect_pane_context(
     ctx: &MainWindowContext,
     pane_handle: PaneHandle,
-) -> Result<(VfsPath, String, Vec<newt_common::vfs::File>), Error> {
+) -> Result<(VfsPath, String, Vec<newt_engine::vfs::File>), Error> {
     let pane = ctx.panes().require(pane_handle)?;
     let pane_path = pane.path();
     let other_pane = ctx.with_update(|gs| gs.other_pane(pane_handle))?;
@@ -440,7 +440,7 @@ fn collect_pane_context(
     let selection_keys = selection_keys(&pane_path, &selection);
 
     let file_list = pane.file_list();
-    let effective_files: Vec<newt_common::vfs::File> = file_list
+    let effective_files: Vec<newt_engine::vfs::File> = file_list
         .files()
         .iter()
         .filter(|f| selection_keys.contains(f.key()))
@@ -473,12 +473,12 @@ async fn execute_rendered(
     ctx: &MainWindowContext,
     title: &str,
     rendered: String,
-    pane_path: newt_common::vfs::path::PathBuf,
+    pane_path: newt_common::path::PathBuf,
     mode: RunMode,
 ) -> Result<(), Error> {
     if mode.terminal {
         let terminal_client = ctx.terminal_client()?;
-        let options = newt_common::terminal::TerminalOptions {
+        let options = newt_engine::terminal::TerminalOptions {
             working_dir: Some(pane_path),
             shell_command: Some(rendered),
             ..Default::default()
@@ -561,7 +561,7 @@ pub async fn run_user_command(
         .clone();
 
     let (pane_path, other_dir, effective_files) = collect_pane_context(&ctx, pane_handle)?;
-    let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
+    let file_refs: Vec<&newt_engine::vfs::File> = effective_files.iter().collect();
 
     // Scanning pass: detect prompt() and confirm() calls
     let (rendered, inputs) = render_template(
@@ -630,7 +630,7 @@ pub async fn execute_user_command(
         .clone();
 
     let (pane_path, other_dir, effective_files) = collect_pane_context(&ctx, pane_handle)?;
-    let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
+    let file_refs: Vec<&newt_engine::vfs::File> = effective_files.iter().collect();
 
     let (rendered, _) = render_template(
         shell_flavor(&ctx)?,
@@ -691,7 +691,7 @@ pub fn update_user_command_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use newt_common::vfs::File;
+    use newt_engine::vfs::File;
 
     fn file_with(name: &str, key: Option<&str>, source: Option<VfsPath>) -> File {
         File {
@@ -710,12 +710,12 @@ mod tests {
     fn template_path_uses_key_for_nested_synthetic_entries() {
         // Two search hits that share a basename but live in different
         // subdirectories: their keys disambiguate, names do not.
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/");
         let a = file_with(
             "foo.txt",
             Some("a/foo.txt"),
             Some(VfsPath::from_wire_str(
-                newt_common::vfs::VfsId::ROOT,
+                newt_common::path::VfsId::ROOT,
                 "/src/a/foo.txt",
             )),
         );
@@ -723,7 +723,7 @@ mod tests {
             "foo.txt",
             Some("b/foo.txt"),
             Some(VfsPath::from_wire_str(
-                newt_common::vfs::VfsId::ROOT,
+                newt_common::path::VfsId::ROOT,
                 "/src/b/foo.txt",
             )),
         );
@@ -739,12 +739,12 @@ mod tests {
 
     #[test]
     fn template_source_exposed_when_set() {
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/");
         let f = file_with(
             "foo.txt",
             Some("a/foo.txt"),
             Some(VfsPath::from_wire_str(
-                newt_common::vfs::VfsId::ROOT,
+                newt_common::path::VfsId::ROOT,
                 "/src/a/foo.txt",
             )),
         );
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn template_source_undefined_for_ordinary_entries() {
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/home/user");
         let f = file_with("foo.txt", None, None);
         let files = [&f];
 
@@ -767,7 +767,7 @@ mod tests {
     }
 
     fn render(flavor: ShellFlavor, template: &str, names: &[&str]) -> Result<String, Error> {
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/home/user");
         let files: Vec<File> = names.iter().map(|n| file_with(n, None, None)).collect();
         let refs: Vec<&File> = files.iter().collect();
         render_template(
@@ -846,10 +846,10 @@ mod tests {
     fn selection_keys_strips_pane_prefix_preserving_subdirs() {
         // Search-VFS pane at root: selection paths are `/key` and the
         // key may itself contain subdirectory separators.
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/");
         let selection = vec![
-            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/a/foo.txt"),
-            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/b/foo.txt"),
+            VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/a/foo.txt"),
+            VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/b/foo.txt"),
         ];
         let keys = selection_keys(&pane, &selection);
         assert_eq!(keys.len(), 2);
@@ -859,10 +859,10 @@ mod tests {
 
     #[test]
     fn selection_keys_real_filesystem_pane() {
-        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
+        let pane = VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/home/user");
         let selection = vec![
-            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user/foo.txt"),
-            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user/bar.txt"),
+            VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/home/user/foo.txt"),
+            VfsPath::from_wire_str(newt_common::path::VfsId::ROOT, "/home/user/bar.txt"),
         ];
         let keys = selection_keys(&pane, &selection);
         assert_eq!(keys.len(), 2);

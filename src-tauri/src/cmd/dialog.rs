@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use newt_common::batch_rename::rule::Rule;
-use newt_common::operation::OperationRequest;
-use newt_common::quick_open::QuickOpenOptions;
-use newt_common::vfs::{PathStyle, VfsId, VfsPath};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::batch_rename::rule::Rule;
+use newt_engine::operation::OperationRequest;
+use newt_engine::quick_open::QuickOpenOptions;
+use newt_engine::vfs::PathStyle;
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
@@ -187,9 +188,7 @@ pub async fn dialog(
                         .and_then(|s| s.volume())
                         .and_then(|v| v.mount_point.as_deref())
                     {
-                        Some(mp) => {
-                            pane_path.path == newt_common::vfs::path::PathBuf::from_wire_str(mp)
-                        }
+                        Some(mp) => pane_path.path == newt_common::path::PathBuf::from_wire_str(mp),
                         None => descriptor.as_ref().is_some_and(|(d, meta)| {
                             d.navigable_parent(&pane_path.path, meta).is_none()
                         }),
@@ -235,7 +234,7 @@ pub async fn dialog(
                         .and_then(|s| s.volume())
                         .and_then(|v| v.mount_point.as_deref())
                     {
-                        Some(mp) => newt_common::vfs::path::PathBuf::from_wire_str(mp),
+                        Some(mp) => newt_common::path::PathBuf::from_wire_str(mp),
                         None => {
                             let Some((descriptor, mount_meta)) = ctx
                                 .vfs_info()
@@ -316,7 +315,7 @@ pub async fn dialog(
                     // than basename — flat search results may share names.
                     let view_state = pane.view_state();
                     let view_files = view_state.files();
-                    let files: Vec<&newt_common::vfs::File> = keys
+                    let files: Vec<&newt_engine::vfs::File> = keys
                         .iter()
                         .filter_map(|key| view_files.iter().find(|f| f.key() == key))
                         .collect();
@@ -787,7 +786,7 @@ fn free_space_queries(ctx: &MainWindowContext, targets: &[VfsTarget]) -> Vec<Vfs
                     if !d.can_fs_stats() {
                         return None;
                     }
-                    newt_common::vfs::path::PathBuf::root()
+                    newt_common::path::PathBuf::root()
                 }
             };
             Some(VfsPath::new(vfs_id, path))
@@ -798,7 +797,7 @@ fn free_space_queries(ctx: &MainWindowContext, targets: &[VfsTarget]) -> Vec<Vfs
 /// The target a free-space query was made for, if the open selector still
 /// has it.
 fn queried_target<'a>(targets: &'a mut [VfsTarget], query: &VfsPath) -> Option<&'a mut VfsTarget> {
-    let root = newt_common::vfs::path::PathBuf::root();
+    let root = newt_common::path::PathBuf::root();
     targets
         .iter_mut()
         .find(|t| t.vfs_id == Some(query.vfs_id) && *t.path.as_ref().unwrap_or(&root) == query.path)
@@ -856,7 +855,7 @@ fn spawn_volume_fetch(ctx: &MainWindowContext) {
         .and_then(|info| info.host_local_vfs_id())
         && id != VfsId::ROOT
     {
-        spawn_volume_fill(ctx, id, Arc::new(newt_common::hot_paths::Local::new()));
+        spawn_volume_fill(ctx, id, Arc::new(newt_engine::hot_paths::Local::new()));
     }
 }
 
@@ -865,9 +864,9 @@ fn spawn_volume_fetch(ctx: &MainWindowContext) {
 fn spawn_volume_fill(
     ctx: &MainWindowContext,
     vfs_id: VfsId,
-    provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+    provider: Arc<dyn newt_engine::hot_paths::HotPathsProvider>,
 ) {
-    use newt_common::hot_paths::HotPathCategory;
+    use newt_engine::hot_paths::HotPathCategory;
 
     let ctx = ctx.clone();
     tauri::async_runtime::spawn(async move {
@@ -952,7 +951,7 @@ fn spawn_volume_fill(
             }
             // Listed with its volumes, the filesystem is its root.
             if at > owner + 1 {
-                let root = VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::root());
+                let root = VfsPath::new(vfs_id, newt_common::path::PathBuf::root());
                 targets[owner].detail = Some(ctx.format_vfs_path(&root));
             }
             Ok(())
@@ -1001,7 +1000,7 @@ fn spawn_property_sheet_fetch(
 async fn fetch_folded_sheet(
     ctx: &MainWindowContext,
     paths: &[VfsPath],
-) -> Result<newt_common::vfs::PropertySheet, Error> {
+) -> Result<newt_engine::vfs::PropertySheet, Error> {
     const CONCURRENCY: usize = 8;
 
     let reader = ctx.fs()?;
@@ -1021,7 +1020,7 @@ async fn fetch_folded_sheet(
         }
     }
 
-    Ok(newt_common::vfs::fold_sheets(&sheets))
+    Ok(newt_engine::vfs::fold_sheets(&sheets))
 }
 
 // ---------------------------------------------------------------------------

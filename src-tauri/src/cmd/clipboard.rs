@@ -3,8 +3,8 @@
 //! paste; other apps and other sessions see only what the OS clipboard can
 //! hold — this machine's files, and the paths of everything.
 
-use newt_common::operation::OperationRequest;
-use newt_common::vfs::{VfsId, VfsPath};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::operation::OperationRequest;
 
 use crate::clipboard::Stamp;
 use crate::common::Error;
@@ -143,7 +143,7 @@ async fn paste(
         let sources = files
             .paths
             .iter()
-            .map(|path| VfsPath::new(host, newt_common::vfs::path::PathBuf::from_native(path)))
+            .map(|path| VfsPath::new(host, newt_common::path::PathBuf::from_native(path)))
             .collect();
         let cut = files.cut.then_some(stamp);
         return paste_files(&ctx, pane_handle, sources, as_move || files.cut, cut).await;

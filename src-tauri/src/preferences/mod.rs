@@ -927,7 +927,7 @@ impl PreferencesManager {
 
         let locale = Some(settings.appearance.locale.clone())
             .filter(|l| !l.is_empty())
-            .or_else(newt_common::locale::system_locale);
+            .or_else(newt_engine::locale::system_locale);
 
         ResolvedPreferences {
             settings,

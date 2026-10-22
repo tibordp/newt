@@ -1,0 +1,1445 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use log::{debug, info};
+use parking_lot::Mutex;
+use tokio::io::AsyncRead;
+use tokio::sync::mpsc;
+
+use crate::vfs::FileChunk;
+use crate::vfs::ToUnix;
+use crate::vfs::mount::MountContext;
+use crate::vfs::{File, FsStats};
+use newt_common::path::{Path, PathBuf};
+use newt_common::{Error, ErrorKind};
+
+use super::properties::{PropertyPatch, PropertySheet};
+use super::{
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier,
+    VfsDescriptor, VfsRandomReader,
+};
+
+/// The dirent for an object listed under a prefix, `name` being the key
+/// past that prefix.
+fn object_file(name: &str, obj: &aws_sdk_s3::types::Object) -> File {
+    let modified = obj.last_modified().and_then(|d| {
+        let secs = d.secs();
+        let nanos = d.subsec_nanos();
+        std::time::SystemTime::UNIX_EPOCH
+            .checked_add(std::time::Duration::new(secs as u64, nanos))
+            .map(|t| t.to_unix())
+    });
+    File {
+        attributes: None,
+        name: name.to_string(),
+        size: Some(obj.size().unwrap_or(0) as u64),
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
+        is_dir: false,
+        is_hidden: false,
+        symlink: None,
+        user: obj
+            .owner()
+            .and_then(|o| o.display_name())
+            .map(|n| crate::vfs::UserGroup::Name(n.to_string())),
+        group: None,
+        mode: None,
+        modified,
+        accessed: None,
+        created: None,
+        key: None,
+        source: None,
+    }
+}
+
+/// Whether requests go somewhere other than AWS: the endpoint as the S3
+/// client resolves it, from the mount, `AWS_ENDPOINT_URL[_S3]` or the
+/// profile.
+fn uses_custom_endpoint(sdk_config: &aws_config::SdkConfig) -> bool {
+    sdk_config.endpoint_url().is_some()
+        || sdk_config.service_config().is_some_and(|config| {
+            aws_types::service_config::ServiceConfigKey::builder()
+                .service_id("S3")
+                .env("AWS_ENDPOINT_URL")
+                .profile("endpoint_url")
+                .build()
+                .ok()
+                .and_then(|key| config.load_config(key))
+                .is_some()
+        })
+}
+
+/// S3 Express One Zone buckets, whose names end in `--x-s3`.
+fn is_directory_bucket(bucket: &str) -> bool {
+    bucket.ends_with("--x-s3")
+}
+
+/// A failure on the client's side of the SDK: a builder, a body stream.
+/// Errors render their full source chain; `SdkError`'s bare `Display` is
+/// just "service error".
+fn local_err<E: std::error::Error>(e: E) -> Error {
+    Error::custom(aws_sdk_s3::error::DisplayErrorContext(&e).to_string())
+}
+
+/// An SDK failure, its kind read from the HTTP status so a missing key and
+/// a refused conditional write are told apart from other failures.
+fn sdk_err<E>(e: aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>) -> Error
+where
+    E: aws_sdk_s3::error::ProvideErrorMetadata + std::error::Error + 'static,
+{
+    use aws_sdk_s3::error::ProvideErrorMetadata;
+    let kind = match e.raw_response().map(|r| r.status().as_u16()) {
+        Some(404) => ErrorKind::NotFound,
+        Some(403) => ErrorKind::PermissionDenied,
+        // A conditional write refused: the key exists (412), or a
+        // concurrent delete of it won the race (409).
+        Some(412) => ErrorKind::AlreadyExists,
+        Some(409) if e.code() == Some("ConditionalRequestConflict") => ErrorKind::AlreadyExists,
+        _ => ErrorKind::Other,
+    };
+    Error {
+        kind,
+        message: aws_sdk_s3::error::DisplayErrorContext(&e).to_string(),
+    }
+}
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct S3Credentials {
+    /// AWS access key ID (IAM user or assumed role).
+    pub access_key_id: Option<String>,
+    /// AWS secret access key.
+    pub secret_access_key: Option<String>,
+    /// AWS session token (for temporary credentials / AssumeRole).
+    pub session_token: Option<String>,
+    /// AWS profile name (from ~/.aws/config). Overrides default profile.
+    pub profile: Option<String>,
+    /// Custom endpoint URL (for S3-compatible services like MinIO, R2, etc.)
+    pub endpoint_url: Option<String>,
+    /// IAM role ARN to assume. When set, uses STS AssumeRole with the
+    /// ambient or explicit credentials, then mounts with the resulting
+    /// temporary credentials.
+    pub role_arn: Option<String>,
+    /// External ID for AssumeRole (optional, for cross-account access).
+    pub external_id: Option<String>,
+}
+
+impl std::fmt::Debug for S3Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Credentials")
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("profile", &self.profile)
+            .field("endpoint_url", &self.endpoint_url)
+            .field("role_arn", &self.role_arn)
+            .field("external_id", &self.external_id)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S3VfsDescriptor
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct S3VfsDescriptor;
+
+impl VfsDescriptor for S3VfsDescriptor {
+    fn type_name(&self) -> &'static str {
+        "s3"
+    }
+    fn display_name(&self) -> &'static str {
+        "S3"
+    }
+    fn auto_mount_request(&self) -> Option<super::MountRequest> {
+        None
+    }
+    fn can_watch(&self) -> bool {
+        true
+    }
+    fn can_read(&self) -> bool {
+        true
+    }
+    fn can_overwrite(&self) -> bool {
+        true
+    }
+    fn can_create_directory(&self) -> bool {
+        true
+    }
+    fn can_create_symlink(&self) -> bool {
+        false
+    }
+    fn can_touch(&self) -> bool {
+        true
+    }
+    fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
+        false
+    }
+    fn can_set_metadata(&self) -> bool {
+        false
+    }
+    fn has_extended_properties(&self) -> bool {
+        true
+    }
+    fn can_remove(&self) -> bool {
+        true
+    }
+    fn can_remove_tree(&self) -> bool {
+        false
+    }
+    fn has_symlinks(&self) -> bool {
+        false
+    }
+    fn can_stat_directories(&self) -> bool {
+        false
+    }
+    fn can_list_recursive(&self) -> bool {
+        true
+    }
+    fn can_fs_stats(&self) -> bool {
+        false
+    }
+    fn can_rename(&self) -> bool {
+        false
+    }
+    fn exact_names(&self) -> bool {
+        true
+    }
+    fn can_copy_within(&self) -> bool {
+        true
+    }
+    fn can_hard_link(&self) -> bool {
+        false
+    }
+    fn auto_refresh(&self) -> bool {
+        false
+    }
+
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
+        let s = path.components().collect::<Vec<_>>().join("/");
+        if bucket_prefix.is_empty() {
+            if s.is_empty() {
+                "s3://".to_string()
+            } else {
+                format!("s3://{}", s)
+            }
+        } else if s.is_empty() {
+            format!("s3://{}/", bucket_prefix)
+        } else {
+            format!("s3://{}/{}", bucket_prefix, s)
+        }
+    }
+
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
+        let mut crumbs = super::unix_breadcrumbs(path);
+        if let Some(root) = crumbs.first_mut() {
+            root.label = if bucket_prefix.is_empty() {
+                "s3://".to_string()
+            } else {
+                format!("s3://{}/", bucket_prefix)
+            };
+        }
+        crumbs
+    }
+
+    fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
+        let s = String::from_utf8_lossy(mount_meta);
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.into_owned())
+        }
+    }
+
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        let rest = input.strip_prefix("s3://")?;
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
+
+        if bucket_prefix.is_empty() {
+            // Unscoped: any s3:// path matches generically
+            Some(DisplayPathMatch::generic(PathBuf::from_wire_str(rest)))
+        } else {
+            // Scoped: only match if the bucket prefix matches
+            let after_bucket = rest
+                .strip_prefix(bucket_prefix.as_ref())
+                .and_then(|s| s.strip_prefix('/').or(Some(s)))?;
+            Some(DisplayPathMatch::exact(PathBuf::from_wire_str(
+                after_bucket,
+            )))
+        }
+    }
+}
+
+pub static S3_VFS_DESCRIPTOR: S3VfsDescriptor = S3VfsDescriptor;
+inventory::submit!(RegisteredDescriptor(&S3_VFS_DESCRIPTOR));
+
+// ---------------------------------------------------------------------------
+// S3Vfs
+// ---------------------------------------------------------------------------
+
+pub struct S3Vfs {
+    /// Default client (the mount's region, us-east-1 when none given) —
+    /// used for ListBuckets and GetBucketLocation, and for everything
+    /// when the region is pinned.
+    default_client: aws_sdk_s3::Client,
+    /// Shared AWS config (credentials, etc.) — used to build per-region clients.
+    sdk_config: aws_sdk_s3::config::Builder,
+    /// Cached per-region clients.
+    region_clients: Mutex<HashMap<String, aws_sdk_s3::Client>>,
+    /// Cached bucket → region mapping.
+    bucket_regions: Mutex<HashMap<String, String>>,
+    /// When set, the VFS is scoped to this bucket (root = bucket contents).
+    scoped_bucket: Option<String>,
+    /// An explicitly configured mount region pins every bucket to it —
+    /// no GetBucketLocation discovery (the IAM policy may not grant it).
+    pinned_region: bool,
+    /// Change notifier for self-notification on mutations.
+    notifier: VfsChangeNotifier,
+    /// AWS honours `If-None-Match` on writes; other S3-compatible stores
+    /// may ignore it and overwrite, so a custom endpoint never promises
+    /// `create_new`.
+    conditional_writes: bool,
+}
+
+impl S3Vfs {
+    /// Build an `S3Vfs` from a `MountRequest::S3` payload. Resolves
+    /// region/profile/credentials, optionally performs an AssumeRole
+    /// round-trip, and constructs the SDK client.
+    pub async fn mount(
+        region: Option<String>,
+        bucket: Option<String>,
+        credentials: S3Credentials,
+        _ctx: &MountContext<'_>,
+    ) -> Result<Arc<dyn Vfs>, Error> {
+        let pinned_region = region.is_some();
+        let region = aws_config::Region::new(region.unwrap_or_else(|| "us-east-1".to_string()));
+
+        let mut config_loader = aws_config::from_env().region(region.clone());
+
+        // Custom endpoint for S3-compatible services
+        if let Some(ref endpoint) = credentials.endpoint_url {
+            config_loader = config_loader.endpoint_url(endpoint);
+        }
+
+        // Use explicit profile if specified
+        if let Some(ref profile) = credentials.profile {
+            config_loader = config_loader.profile_name(profile);
+        }
+
+        // Use explicit IAM credentials if provided
+        if let (Some(access_key), Some(secret_key)) =
+            (&credentials.access_key_id, &credentials.secret_access_key)
+        {
+            let creds = aws_sdk_s3::config::Credentials::new(
+                access_key,
+                secret_key,
+                credentials.session_token.clone(),
+                None,
+                "newt-explicit",
+            );
+            config_loader = config_loader.credentials_provider(creds);
+        }
+
+        let mut sdk_config = config_loader.load().await;
+
+        // AssumeRole: use the resolved credentials to assume a role,
+        // then rebuild the config with the temporary credentials.
+        if let Some(ref role_arn) = credentials.role_arn {
+            let sts_client = aws_sdk_sts::Client::new(&sdk_config);
+            let mut assume = sts_client
+                .assume_role()
+                .role_arn(role_arn)
+                .role_session_name("newt-session");
+            if let Some(ref ext_id) = credentials.external_id {
+                assume = assume.external_id(ext_id);
+            }
+            let resp = assume.send().await.map_err(|e| Error {
+                kind: newt_common::ErrorKind::Other,
+                message: format!(
+                    "AssumeRole failed: {}",
+                    aws_sdk_s3::error::DisplayErrorContext(&e)
+                ),
+            })?;
+            let sts_creds = resp.credentials().ok_or_else(|| Error {
+                kind: newt_common::ErrorKind::Other,
+                message: "AssumeRole returned no credentials".into(),
+            })?;
+            let temp_creds = aws_sdk_s3::config::Credentials::new(
+                sts_creds.access_key_id(),
+                sts_creds.secret_access_key(),
+                Some(sts_creds.session_token().to_string()),
+                None,
+                "newt-assume-role",
+            );
+            sdk_config = aws_config::from_env()
+                .region(region)
+                .credentials_provider(temp_creds)
+                .load()
+                .await;
+        }
+
+        let client = aws_sdk_s3::Client::new(&sdk_config);
+        let vfs = S3Vfs::new(client, sdk_config, bucket, pinned_region);
+        vfs.healthcheck().await?;
+        Ok(Arc::new(vfs))
+    }
+
+    /// One probe request at mount time, mirroring what the first
+    /// navigation will do (so it needs no permissions beyond browsing).
+    /// The SDK client is otherwise fully lazy — without this, bad
+    /// credentials/endpoint/bucket surface only at listing time, after
+    /// the mount dialog is gone.
+    async fn healthcheck(&self) -> Result<(), Error> {
+        match &self.scoped_bucket {
+            Some(bucket) => {
+                let client = self.client_for_bucket(bucket).await?;
+                client
+                    .list_objects_v2()
+                    .bucket(bucket)
+                    .delimiter("/")
+                    .max_keys(1)
+                    .send()
+                    .await
+                    .map_err(sdk_err)?;
+            }
+            None => {
+                self.default_client
+                    .list_buckets()
+                    .max_buckets(1)
+                    .send()
+                    .await
+                    .map_err(sdk_err)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn new(
+        default_client: aws_sdk_s3::Client,
+        sdk_config: aws_config::SdkConfig,
+        scoped_bucket: Option<String>,
+        pinned_region: bool,
+    ) -> Self {
+        Self {
+            default_client,
+            conditional_writes: !uses_custom_endpoint(&sdk_config),
+            sdk_config: aws_sdk_s3::config::Builder::from(&sdk_config),
+            region_clients: Mutex::new(HashMap::new()),
+            bucket_regions: Mutex::new(HashMap::new()),
+            scoped_bucket,
+            pinned_region,
+            notifier: VfsChangeNotifier::new(),
+        }
+    }
+
+    /// Get or create an S3 client for the given bucket's region.
+    async fn client_for_bucket(&self, bucket: &str) -> Result<aws_sdk_s3::Client, Error> {
+        // An explicit mount region answers for every bucket — the user
+        // said where the data lives, and GetBucketLocation may be denied.
+        if self.pinned_region {
+            return Ok(self.default_client.clone());
+        }
+
+        // Check cache first
+        if let Some(region) = self.bucket_regions.lock().get(bucket).cloned()
+            && let Some(client) = self.region_clients.lock().get(&region).cloned()
+        {
+            debug!(
+                "s3: client cache hit for bucket={} region={}",
+                bucket, region
+            );
+            return Ok(client);
+        }
+
+        // Discover region via GetBucketLocation
+        let resp = self
+            .default_client
+            .get_bucket_location()
+            .bucket(bucket)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        // GetBucketLocation returns None/empty for us-east-1
+        let region = resp
+            .location_constraint()
+            .map(|lc| lc.as_str().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "us-east-1".to_string());
+
+        info!("s3: discovered region={} for bucket={}", region, bucket);
+
+        // Get or create client for this region
+        let client = {
+            let mut clients = self.region_clients.lock();
+            if let Some(c) = clients.get(&region) {
+                c.clone()
+            } else {
+                info!("s3: creating new client for region={}", region);
+                let config = self
+                    .sdk_config
+                    .clone()
+                    .region(aws_sdk_s3::config::Region::new(region.clone()))
+                    .build();
+                let c = aws_sdk_s3::Client::from_conf(config);
+                clients.insert(region.clone(), c.clone());
+                c
+            }
+        };
+
+        self.bucket_regions
+            .lock()
+            .insert(bucket.to_string(), region);
+        Ok(client)
+    }
+
+    /// Parse an absolute path into (bucket, prefix).
+    /// `/` → (None, None) — list buckets
+    /// `/my-bucket` → (Some("my-bucket"), None) — list bucket root
+    /// `/my-bucket/some/prefix/` → (Some("my-bucket"), Some("some/prefix/"))
+    ///
+    /// When scoped to a bucket, the bucket is prepended to the path:
+    /// `/` → (Some("scoped-bucket"), None)
+    /// `/some/prefix/` → (Some("scoped-bucket"), Some("some/prefix/"))
+    fn parse_path(&self, path: &Path) -> (Option<String>, Option<String>) {
+        let s = path.as_wire_str();
+        let s = s.trim_start_matches('/');
+
+        // When scoped to a bucket, treat the entire path as a prefix within it
+        if let Some(ref bucket) = self.scoped_bucket {
+            if s.is_empty() {
+                return (Some(bucket.clone()), None);
+            }
+            return (Some(bucket.clone()), Some(s.to_string()));
+        }
+
+        if s.is_empty() {
+            return (None, None);
+        }
+        match s.find('/') {
+            None => (Some(s.to_string()), None),
+            Some(idx) => {
+                let bucket = &s[..idx];
+                let prefix = &s[idx + 1..];
+                if prefix.is_empty() {
+                    (Some(bucket.to_string()), None)
+                } else {
+                    (Some(bucket.to_string()), Some(prefix.to_string()))
+                }
+            }
+        }
+    }
+
+    async fn list_buckets(
+        &self,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
+    ) -> Result<Vec<File>, Error> {
+        let resp = self
+            .default_client
+            .list_buckets()
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        debug!("s3: list_buckets returned {} buckets", resp.buckets().len());
+
+        let mut files = Vec::new();
+        for bucket in resp.buckets() {
+            let name = bucket.name().unwrap_or_default().to_string();
+            let created = bucket.creation_date().and_then(|d| {
+                let secs = d.secs();
+                let nanos = d.subsec_nanos();
+                std::time::SystemTime::UNIX_EPOCH
+                    .checked_add(std::time::Duration::new(secs as u64, nanos))
+                    .map(|t| t.to_unix())
+            });
+
+            files.push(File {
+                attributes: None,
+                name,
+                size: None,
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
+                is_dir: true,
+                is_hidden: false,
+                symlink: None,
+                user: None,
+                group: None,
+                mode: None,
+                modified: None,
+                accessed: None,
+                created,
+                key: None,
+                source: None,
+            });
+        }
+
+        if let Some(tx) = batch_tx
+            && !files.is_empty()
+        {
+            let _ = tx.send(files.clone()).await;
+        }
+
+        Ok(files)
+    }
+
+    /// Every object under `key_prefix` in `bucket`, a page per batch, as
+    /// paths under `base`. `Ok(false)` when the receiver went away.
+    async fn list_objects_flat(
+        &self,
+        bucket: &str,
+        key_prefix: Option<String>,
+        base: &Path,
+        tx: &mpsc::Sender<Vec<super::FlatEntry>>,
+    ) -> Result<bool, Error> {
+        let key_prefix = key_prefix.map(|p| {
+            if p.ends_with('/') {
+                p
+            } else {
+                format!("{}/", p)
+            }
+        });
+        debug!(
+            "s3: list_objects_flat bucket={} prefix={:?}",
+            bucket, key_prefix
+        );
+        let client = self.client_for_bucket(bucket).await?;
+        let mut request = client.list_objects_v2().bucket(bucket);
+        if let Some(p) = &key_prefix {
+            request = request.prefix(p);
+        }
+        let prefix_len = key_prefix.as_ref().map_or(0, |p| p.len());
+        let mut continuation_token: Option<String> = None;
+        loop {
+            let mut req = request.clone();
+            if let Some(ref token) = continuation_token {
+                req = req.continuation_token(token);
+            }
+            let resp = req.send().await.map_err(sdk_err)?;
+            let mut batch = Vec::new();
+            for obj in resp.contents() {
+                let Some(key) = obj.key() else { continue };
+                let rel = &key[prefix_len..];
+                if rel.is_empty() || rel == "/" {
+                    continue;
+                }
+                let (rel, is_dir) = match rel.strip_suffix('/') {
+                    Some(dir) => (dir, true),
+                    None => (rel, false),
+                };
+                let path = base.join(rel);
+                let name = path.file_name().unwrap_or_default();
+                let file = if is_dir {
+                    File::bare_dir(name)
+                } else {
+                    object_file(name, obj)
+                };
+                batch.push(super::FlatEntry { path, file });
+            }
+            if !batch.is_empty() && tx.send(batch).await.is_err() {
+                return Ok(false);
+            }
+            if resp.is_truncated().unwrap_or(false) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+                if continuation_token.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(true)
+    }
+
+    async fn list_objects(
+        &self,
+        bucket: &str,
+        prefix: Option<&str>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
+    ) -> Result<Vec<File>, Error> {
+        // S3 requires prefixes to end with '/' to list directory contents
+        let prefix = prefix.map(|p| {
+            if p.ends_with('/') {
+                p.to_string()
+            } else {
+                format!("{}/", p)
+            }
+        });
+        let prefix = prefix.as_deref();
+
+        let mut files = Vec::new();
+
+        // ".." entry — skip at the root of a scoped bucket (nowhere to go up to)
+        let at_scoped_root = self.scoped_bucket.is_some() && prefix.is_none();
+        if !at_scoped_root {
+            files.push(File::parent_dir());
+        }
+
+        debug!("s3: list_objects bucket={} prefix={:?}", bucket, prefix);
+
+        let client = self.client_for_bucket(bucket).await?;
+
+        let mut request = client.list_objects_v2().bucket(bucket).delimiter("/");
+
+        if let Some(p) = prefix {
+            request = request.prefix(p);
+        }
+
+        let mut continuation_token: Option<String> = None;
+        loop {
+            let mut req = request.clone();
+            if let Some(ref token) = continuation_token {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req.send().await.map_err(sdk_err)?;
+
+            debug!(
+                "s3: list_objects page: {} prefixes, {} objects",
+                resp.common_prefixes().len(),
+                resp.contents().len()
+            );
+
+            let prefix_len = prefix.map_or(0, |p| p.len());
+            let mut batch = Vec::new();
+
+            // Common prefixes (directories)
+            for cp in resp.common_prefixes() {
+                if let Some(p) = cp.prefix() {
+                    let name = &p[prefix_len..];
+                    let name = name.trim_end_matches('/');
+                    if newt_common::path::is_valid_name(name) {
+                        batch.push(File {
+                            attributes: None,
+                            name: name.to_string(),
+                            size: None,
+                            allocated_size: None,
+                            device_id: None,
+                            inode: None,
+                            hard_links: None,
+                            is_dir: true,
+                            is_hidden: false,
+                            symlink: None,
+                            user: None,
+                            group: None,
+                            mode: None,
+                            modified: None,
+                            accessed: None,
+                            created: None,
+                            key: None,
+                            source: None,
+                        });
+                    }
+                }
+            }
+
+            // Objects (files)
+            for obj in resp.contents() {
+                if let Some(key) = obj.key() {
+                    let name = &key[prefix_len..];
+                    // Skip the prefix itself if it appears as a key (e.g.
+                    // "dir/" marker objects), and keys that spell `.`/`..`.
+                    if !newt_common::path::is_valid_name(name) {
+                        continue;
+                    }
+                    batch.push(object_file(name, obj));
+                }
+            }
+
+            if let Some(tx) = &batch_tx
+                && !batch.is_empty()
+            {
+                let _ = tx.send(batch.clone()).await;
+            }
+            files.extend(batch);
+
+            if resp.is_truncated() == Some(true) {
+                continuation_token = resp.next_continuation_token().map(|s| s.to_string());
+            } else {
+                break;
+            }
+        }
+
+        Ok(files)
+    }
+}
+
+mod attributes;
+mod properties;
+mod writer;
+
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod writer_tests;
+
+/// Everything but RFC 3986's unreserved characters.
+const UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Tags as `x-amz-tagging` takes them: URL query parameters, percent-
+/// encoded (a space is `%20`; S3 doesn't read `+` as one).
+fn tagging(tags: &std::collections::BTreeMap<String, String>) -> String {
+    use percent_encoding::utf8_percent_encode;
+    tags.iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                utf8_percent_encode(key, UNRESERVED),
+                utf8_percent_encode(value, UNRESERVED)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// `x-amz-copy-source` for an object. S3 percent-decodes the header, and
+/// the SDK sends it as given, so a raw key with `%`, `+` or non-ASCII in
+/// it names some other object or none.
+fn copy_source(bucket: &str, key: &str) -> String {
+    const PATH: &percent_encoding::AsciiSet = &UNRESERVED.remove(b'/');
+    format!(
+        "{bucket}/{}",
+        percent_encoding::utf8_percent_encode(key, PATH)
+    )
+}
+
+impl S3Vfs {
+    /// For a `replace` write: what the object being replaced carries — its
+    /// metadata and storage class into `options` (unless the caller set
+    /// them), its tags and ACL grants into what the writer keeps. A PutObject
+    /// replaces an object whole by itself; this is the "stays what it was"
+    /// half. Refused when the tags or the ACL can't be read.
+    async fn keep(
+        &self,
+        path: &Path,
+        client: &aws_sdk_s3::Client,
+        bucket: &str,
+        key: &str,
+        options: &mut super::attributes::WriteOptions,
+    ) -> Result<writer::Kept, Error> {
+        use super::attributes::{Attribute, AttributeKind};
+        let head = match client.head_object().bucket(bucket).key(key).send().await {
+            Ok(head) => head,
+            Err(e) => match sdk_err(e) {
+                e if e.kind == ErrorKind::NotFound => return Ok(writer::Kept::default()),
+                e => return Err(e),
+            },
+        };
+        options
+            .object_metadata
+            .get_or_insert_with(|| attributes::object_metadata(&head));
+        if options.object_storage_class.is_none() {
+            options.object_storage_class = head.storage_class().map(|c| c.as_str().to_owned());
+        }
+        let refuse = |_| Error::not_supported();
+        let tags = match self
+            .read_object_attribute(path, AttributeKind::ObjectTags)
+            .await
+            .map_err(refuse)?
+        {
+            Some(Attribute::ObjectTags(tags)) if !tags.is_empty() => Some(tagging(&tags)),
+            _ => None,
+        };
+        let grants = match self
+            .read_object_attribute(path, AttributeKind::ObjectAccess)
+            .await
+            .map_err(refuse)?
+        {
+            Some(Attribute::ObjectAccess(grants)) => Some(grants),
+            _ => None,
+        };
+        Ok(writer::Kept {
+            tagging: tags,
+            grants,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl Vfs for S3Vfs {
+    fn descriptor(&self) -> &'static dyn VfsDescriptor {
+        &S3_VFS_DESCRIPTOR
+    }
+
+    fn mount_meta(&self) -> Vec<u8> {
+        self.scoped_bucket
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes()
+            .to_vec()
+    }
+
+    async fn list_files(
+        &self,
+        path: &Path,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
+    ) -> Result<super::VfsFileList, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let files = match bucket {
+            None => self.list_buckets(batch_tx).await?,
+            Some(bucket) => {
+                self.list_objects(&bucket, prefix.as_deref(), batch_tx)
+                    .await?
+            }
+        };
+        Ok(files.into())
+    }
+
+    /// One delimiter-less `ListObjectsV2` per page over the prefix, each
+    /// page a batch. Only objects come back; a `dir/` marker object
+    /// becomes a directory entry and every other directory is implied by
+    /// its keys. Above the buckets, every bucket in name order, each
+    /// listed the same way after its own entry.
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<super::FlatEntry>>,
+    ) -> Result<(), Error> {
+        let (bucket, key_prefix) = self.parse_path(prefix);
+        let Some(bucket) = bucket else {
+            let mut buckets: Vec<File> = self
+                .list_buckets(None)
+                .await?
+                .into_iter()
+                .filter(|f| f.is_dir && f.name != "..")
+                .collect();
+            buckets.sort_by(|a, b| a.name.cmp(&b.name));
+            for file in buckets {
+                let path = prefix.join(&file.name);
+                let name = file.name.clone();
+                if tx
+                    .send(vec![super::FlatEntry {
+                        path: path.clone(),
+                        file,
+                    }])
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                if !self.list_objects_flat(&name, None, &path, &tx).await? {
+                    return Ok(());
+                }
+            }
+            return Ok(());
+        };
+        self.list_objects_flat(&bucket, key_prefix, prefix, &tx)
+            .await
+            .map(|_| ())
+    }
+
+    async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {
+        Ok(None)
+    }
+
+    async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
+        self.notifier.watch(path).await;
+        Ok(())
+    }
+
+    /// S3 has no links, so `follow` changes nothing.
+    async fn file_info(&self, path: &Path, _follow: bool) -> Result<File, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        let resp = client
+            .head_object()
+            .bucket(&bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        let size = resp.content_length().unwrap_or(0) as u64;
+        let is_dir = key.ends_with('/') && size == 0;
+        let modified = resp.last_modified().and_then(|d| {
+            let secs = d.secs();
+            let nanos = d.subsec_nanos();
+            std::time::SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(secs as u64, nanos))
+                .map(|t| t.to_unix())
+        });
+
+        let name = path.file_name().map(|n| n.to_string()).unwrap_or_default();
+
+        Ok(File {
+            attributes: None,
+            name,
+            size: (!is_dir).then_some(size),
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
+            is_dir,
+            is_hidden: false,
+            symlink: None,
+            user: None,
+            group: None,
+            mode: None,
+            modified,
+            accessed: None,
+            created: None,
+            key: None,
+            source: None,
+        })
+    }
+
+    async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        let (chunk, _etag) = ranged_get(&client, &bucket, &key, offset, length, None).await?;
+        Ok(chunk)
+    }
+
+    async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        // No request here — the ETag pins on the first read's response.
+        Ok(Box::new(S3RandomReader {
+            client,
+            bucket,
+            key,
+            etag: None,
+        }))
+    }
+
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        let resp = client
+            .get_object()
+            .bucket(&bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        Ok(Box::new(resp.body.into_async_read()))
+    }
+
+    async fn read_attribute(
+        &self,
+        path: &Path,
+        kind: super::attributes::AttributeKind,
+    ) -> Result<Option<super::attributes::Attribute>, Error> {
+        self.read_object_attribute(path, kind).await
+    }
+
+    async fn write_attribute(
+        &self,
+        path: &Path,
+        property: &super::attributes::Attribute,
+    ) -> Result<(), Error> {
+        self.write_object_attribute(path, property).await
+    }
+
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        if options.sparse {
+            return Err(Error::not_supported());
+        }
+        // The condition is checked when the upload completes, after its
+        // body is sent: only an object known to fit one request is worth
+        // sending on the chance it is refused.
+        if options.create_new
+            && !(self.conditional_writes
+                && options
+                    .size_hint
+                    .is_some_and(|size| size <= writer::PART_SIZE))
+        {
+            return Err(Error::not_supported());
+        }
+        if options.replace && options.create_new {
+            return Err(Error::not_supported());
+        }
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+        let mut options = options.clone();
+        let kept = if options.replace {
+            self.keep(path, &client, &bucket, &key, &mut options)
+                .await?
+        } else {
+            writer::Kept::default()
+        };
+        Ok(Box::new(writer::S3AsyncWriter::new(
+            client,
+            bucket,
+            key,
+            options,
+            kept,
+            self.notifier.clone(),
+            path.to_owned(),
+        )))
+    }
+
+    async fn remove_file(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or(Error::not_supported())?;
+
+        debug!("s3: remove_file bucket={} key={}", bucket, key);
+
+        let client = self.client_for_bucket(&bucket).await?;
+        client
+            .delete_object()
+            .bucket(&bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        self.notifier.notify(path);
+        Ok(())
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or(Error::not_supported())?;
+
+        // S3 directory markers are stored with a trailing slash
+        let dir_key = if key.ends_with('/') {
+            key
+        } else {
+            format!("{}/", key)
+        };
+
+        debug!("s3: remove_dir bucket={} key={}", bucket, dir_key);
+
+        let client = self.client_for_bucket(&bucket).await?;
+        client
+            .delete_object()
+            .bucket(&bucket)
+            .key(&dir_key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        self.notifier.notify(path);
+        Ok(())
+    }
+
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<(), Error> {
+        if options.sparse {
+            return Err(Error::not_supported());
+        }
+        let (src_bucket, src_key) = self.parse_path(from);
+        let src_bucket = src_bucket.ok_or(Error::not_supported())?;
+        let src_key = src_key.ok_or_else(|| Error::custom("no source key"))?;
+
+        let (dst_bucket, dst_key) = self.parse_path(to);
+        let dst_bucket = dst_bucket.ok_or(Error::not_supported())?;
+        let dst_key = dst_key.ok_or_else(|| Error::custom("no destination key"))?;
+        // Directory buckets take the condition on PutObject and
+        // CompleteMultipartUpload only.
+        if options.create_new && (!self.conditional_writes || is_directory_bucket(&dst_bucket)) {
+            return Err(Error::not_supported());
+        }
+
+        debug!(
+            "s3: copy_within {}/{} -> {}/{}",
+            src_bucket, src_key, dst_bucket, dst_key
+        );
+
+        let client = self.client_for_bucket(&dst_bucket).await?;
+        let src_client = self.client_for_bucket(&src_bucket).await?;
+        let copy_source = copy_source(&src_bucket, &src_key);
+
+        // The head supplies the size limit and the native storage-class default.
+        let head = src_client
+            .head_object()
+            .bucket(&src_bucket)
+            .key(&src_key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        // CopyObject caps out at 5 GiB per atomic copy — signal
+        // NotSupported so the copy cascade falls back to streaming.
+        if head.content_length().unwrap_or(0) as u64 > 5 * 1024 * 1024 * 1024 {
+            return Err(Error::not_supported());
+        }
+
+        let mut request = client
+            .copy_object()
+            .bucket(&dst_bucket)
+            .key(&dst_key)
+            .copy_source(&copy_source)
+            .set_storage_class(
+                options
+                    .object_storage_class
+                    .as_deref()
+                    .map(aws_sdk_s3::types::StorageClass::from)
+                    .or_else(|| head.storage_class().cloned()),
+            )
+            .set_acl(
+                options
+                    .object_canned_acl
+                    .as_deref()
+                    .map(aws_sdk_s3::types::ObjectCannedAcl::from),
+            )
+            .set_if_none_match(options.create_new.then(|| "*".to_string()));
+        if let Some(meta) = &options.object_metadata {
+            request = request
+                .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+                .set_metadata(Some(meta.metadata.clone().into_iter().collect()))
+                .set_content_type(meta.content_type.clone())
+                .set_content_encoding(meta.content_encoding.clone())
+                .set_content_language(meta.content_language.clone())
+                .set_content_disposition(meta.content_disposition.clone())
+                .set_cache_control(meta.cache_control.clone())
+                .set_expires(attributes::expires(meta)?);
+        }
+        request.send().await.map_err(sdk_err)?;
+
+        self.notifier.notify(to);
+        Ok(())
+    }
+
+    async fn touch(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        debug!("s3: touch bucket={} key={}", bucket, key);
+
+        // A store that ignores the condition would empty an existing
+        // object; ask first where the condition is not trusted.
+        if !self.conditional_writes {
+            match client.head_object().bucket(&bucket).key(&key).send().await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    let e = sdk_err(e);
+                    if e.kind != ErrorKind::NotFound {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        // Conditional put: only create if the object doesn't already exist
+        let result = client
+            .put_object()
+            .bucket(&bucket)
+            .key(&key)
+            .if_none_match("*")
+            .body(aws_sdk_s3::primitives::ByteStream::from_static(b""))
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => {
+                self.notifier.notify(path);
+                Ok(())
+            }
+            Err(e) => {
+                // 412 Precondition Failed means the object already exists — that's fine for touch
+                let is_precondition_failed = e
+                    .raw_response()
+                    .map(|r| r.status().as_u16() == 412)
+                    .unwrap_or(false);
+
+                if is_precondition_failed {
+                    debug!("s3: touch object already exists (412), no-op");
+                    Ok(())
+                } else {
+                    Err(sdk_err(e))
+                }
+            }
+        }
+    }
+
+    async fn get_property_sheet(&self, path: &Path) -> Result<PropertySheet, Error> {
+        self.build_property_sheet(path).await
+    }
+
+    async fn apply_properties(&self, path: &Path, patch: &PropertyPatch) -> Result<(), Error> {
+        self.apply_property_patch(path, patch).await
+    }
+
+    async fn create_directory(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        debug!("s3: create_directory bucket={} key={}", bucket, key);
+
+        // S3 "directories" are zero-byte objects with a trailing /
+        let dir_key = if key.ends_with('/') {
+            key
+        } else {
+            format!("{}/", key)
+        };
+
+        client
+            .put_object()
+            .bucket(&bucket)
+            .key(&dir_key)
+            .body(aws_sdk_s3::primitives::ByteStream::from_static(b""))
+            .send()
+            .await
+            .map_err(sdk_err)?;
+        self.notifier.notify(path);
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ranged GetObject
+// ---------------------------------------------------------------------------
+
+/// One ranged GetObject. A range starting at or past the object size gets
+/// 416 rather than an empty body — mapped to POSIX read-at-EOF semantics
+/// (the 416 response still carries the size, "Content-Range: bytes
+/// */12345"). `if_match` pins the object generation; a concurrent
+/// overwrite then fails the read instead of mixing generations. Returns
+/// the response's ETag alongside the chunk so callers can establish the pin.
+async fn ranged_get(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    offset: u64,
+    length: u64,
+    if_match: Option<&str>,
+) -> Result<(FileChunk, Option<String>), Error> {
+    let end = offset + length - 1;
+    let range = format!("bytes={}-{}", offset, end);
+
+    let resp = match client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .range(range)
+        .set_if_match(if_match.map(str::to_string))
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 416) => {
+            let total_size = e
+                .raw_response()
+                .and_then(|r| r.headers().get("content-range"))
+                .and_then(|v| v.rsplit('/').next())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(offset);
+            return Ok((
+                FileChunk {
+                    data: Vec::new(),
+                    offset,
+                    total_size,
+                },
+                None,
+            ));
+        }
+        Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 412) => {
+            return Err(Error::custom(format!(
+                "object changed while reading: s3://{}/{}",
+                bucket, key
+            )));
+        }
+        Err(e) => return Err(sdk_err(e)),
+    };
+
+    // Parse total size from content_range header (e.g. "bytes 0-99/12345")
+    let total_size = resp
+        .content_range()
+        .and_then(|r| r.rsplit('/').next())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(resp.content_length().unwrap_or(0) as u64);
+
+    let etag = resp.e_tag().map(str::to_string);
+
+    let data = resp
+        .body
+        .collect()
+        .await
+        .map_err(local_err)?
+        .into_bytes()
+        .to_vec();
+
+    Ok((
+        FileChunk {
+            data,
+            offset,
+            total_size,
+        },
+        etag,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// S3RandomReader — ranged GETs pinned to one object generation
+// ---------------------------------------------------------------------------
+
+struct S3RandomReader {
+    client: aws_sdk_s3::Client,
+    bucket: String,
+    key: String,
+    /// Pinned on the first read's response; every later read sends it as
+    /// If-Match.
+    etag: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl VfsRandomReader for S3RandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        let (chunk, etag) = ranged_get(
+            &self.client,
+            &self.bucket,
+            &self.key,
+            offset,
+            len,
+            self.etag.as_deref(),
+        )
+        .await?;
+        if self.etag.is_none() {
+            self.etag = etag;
+        }
+        Ok(chunk.data)
+    }
+}

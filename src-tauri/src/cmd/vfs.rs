@@ -1,4 +1,5 @@
-use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor, search::SearchParams};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::vfs::{MountRequest, lookup_descriptor, search::SearchParams};
 use tauri::Manager;
 
 use crate::common::Error;
@@ -58,7 +59,7 @@ pub async fn mount_s3(
     pane_handle: PaneHandle,
     region: Option<String>,
     bucket: Option<String>,
-    credentials: newt_common::vfs::S3Credentials,
+    credentials: newt_engine::vfs::S3Credentials,
 ) -> Result<(), Error> {
     let app_handle = ctx.window().app_handle().clone();
     // Secret-free target for the recents MRU; the mode is recovered from
@@ -164,7 +165,7 @@ pub async fn switch_vfs(
     pane_handle: PaneHandle,
     vfs_id: Option<VfsId>,
     type_name: String,
-    path: Option<newt_common::vfs::path::PathBuf>,
+    path: Option<newt_common::path::PathBuf>,
 ) -> Result<(), Error> {
     let vfs_path = if let Some(id) = vfs_id {
         // A drive or a volume carries the exact path to land on;

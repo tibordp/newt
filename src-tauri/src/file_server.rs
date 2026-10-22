@@ -7,8 +7,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use log::info;
-use newt_common::filesystem::Filesystem;
-use newt_common::vfs::{VfsId, VfsPath};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::filesystem::Filesystem;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 

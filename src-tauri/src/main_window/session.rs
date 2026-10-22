@@ -1,18 +1,19 @@
-use newt_common::api::API_OPERATION_PROGRESS;
-use newt_common::enrich::{
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::api::API_OPERATION_PROGRESS;
+use newt_engine::enrich::{
     EnricherClient, Enrichers, du::DuEnricher, git::GitEnricher, package::PackageEnricher,
 };
-use newt_common::filesystem::Filesystem;
-use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
-use newt_common::rpc::Communicator;
-use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
-use newt_common::terminal::TerminalClient;
-use newt_common::vfs::FileList;
-use newt_common::vfs::mount::VfsRegistryManager;
-use newt_common::vfs::{
-    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
-    VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFs,
+use newt_engine::filesystem::Filesystem;
+use newt_engine::operation::{OperationContext, OperationProgress, OperationsClient};
+use newt_engine::shell::{LocalShellService, ShellRemote, ShellService};
+use newt_engine::terminal::TerminalClient;
+use newt_engine::vfs::FileList;
+use newt_engine::vfs::mount::VfsRegistryManager;
+use newt_engine::vfs::{
+    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsManager,
+    VfsManagerRemote, VfsRegistry, VfsRegistryFs,
 };
+use newt_rpc::Communicator;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,9 +25,9 @@ use crate::session_memory::{PaneLocation, Seed};
 
 use super::{MainWindowState, Operations, apply_operation_progress};
 
-use newt_common::askpass::AskpassProvider;
-use newt_common::connect::{ConnectLog, DynStderr, DynStream, spawn_stderr_reader};
-pub use newt_common::connect::{
+use newt_engine::askpass::AskpassProvider;
+use newt_engine::connect::{ConnectLog, DynStderr, DynStream, spawn_stderr_reader};
+pub use newt_engine::connect::{
     DirectCopyPlan, SpawnSpec, docker_direct_copy_plan, docker_transport_cmd, kube_transport_cmd,
     podman_direct_copy_plan, podman_transport_cmd, ssh_transport_cmd,
 };
@@ -157,8 +158,8 @@ impl serde::Serialize for ConnectionState {
 // AgentResolver
 // ---------------------------------------------------------------------------
 
-pub use newt_common::agent_resolver::AgentResolver;
-use newt_common::agent_resolver::{agent_file_name, local_agent_triple};
+pub use newt_engine::agent_resolver::AgentResolver;
+use newt_engine::agent_resolver::{agent_file_name, local_agent_triple};
 
 /// Host-side resolver. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
@@ -296,9 +297,9 @@ pub struct Session {
     pub(super) vfs_info: Arc<dyn VfsInfo>,
     pub(super) terminal_client: Arc<dyn TerminalClient>,
     pub(super) operations_client: Arc<dyn OperationsClient>,
-    pub(super) hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
-    pub(super) quick_open_client: Arc<dyn newt_common::quick_open::QuickOpenClient>,
-    pub(super) discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
+    pub(super) hot_paths_provider: Arc<dyn newt_engine::hot_paths::HotPathsProvider>,
+    pub(super) quick_open_client: Arc<dyn newt_engine::quick_open::QuickOpenClient>,
+    pub(super) discovery_provider: Arc<dyn newt_engine::discovery::DiscoveryProvider>,
     pub(super) mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
     pub(super) next_operation_id: AtomicU64,
     pub(super) file_server_port: u16,
@@ -345,7 +346,7 @@ pub trait VfsInfo: Send + Sync {
     /// directory itself for a directory origin (searches). For VFSes with
     /// no origin (S3, SFTP, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
-    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::vfs::path::PathBuf> {
+    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::path::PathBuf> {
         let mut current = path.clone();
         loop {
             if current.vfs_id == VfsId::ROOT {
@@ -358,7 +359,7 @@ pub trait VfsInfo: Send + Sync {
             let (desc, _) = self.descriptor(current.vfs_id)?;
             let origin = self.origin(current.vfs_id)?;
             current = match desc.origin_kind() {
-                newt_common::vfs::OriginKind::Directory => origin,
+                newt_engine::vfs::OriginKind::Directory => origin,
                 _ => origin.parent()?,
             };
         }
@@ -374,7 +375,7 @@ impl VfsInfo for MountedVfsInfoService {
     fn descriptor(
         &self,
         vfs_id: VfsId,
-    ) -> Option<(&'static dyn newt_common::vfs::VfsDescriptor, Vec<u8>)> {
+    ) -> Option<(&'static dyn newt_engine::vfs::VfsDescriptor, Vec<u8>)> {
         self.mounted_vfs
             .read()
             .get(&vfs_id)
@@ -412,7 +413,7 @@ impl VfsInfo for MountedVfsInfoService {
         // — a plain "Remote" is ambiguous next to the session's own root.
         if descriptor.type_name() == "agent" {
             return Some(
-                newt_common::vfs::mount_meta_kind(&mount_meta)
+                newt_engine::vfs::mount_meta_kind(&mount_meta)
                     .unwrap_or_else(|| descriptor.display_name().to_string()),
             );
         }
@@ -446,18 +447,18 @@ impl VfsInfo for MountedVfsInfoService {
 /// rewriting on the way back.
 struct HairpinQuickOpen {
     remote_vfs_id: VfsId,
-    local: newt_common::quick_open::Local,
-    inner: Arc<dyn newt_common::quick_open::QuickOpenClient>,
+    local: newt_engine::quick_open::Local,
+    inner: Arc<dyn newt_engine::quick_open::QuickOpenClient>,
 }
 
 #[async_trait::async_trait]
-impl newt_common::quick_open::QuickOpenClient for HairpinQuickOpen {
+impl newt_engine::quick_open::QuickOpenClient for HairpinQuickOpen {
     async fn run(
         &self,
         root: VfsPath,
-        options: newt_common::quick_open::QuickOpenOptions,
+        options: newt_engine::quick_open::QuickOpenOptions,
         query: tokio::sync::watch::Receiver<String>,
-        updates: tokio::sync::mpsc::Sender<newt_common::quick_open::QuickOpenUpdate>,
+        updates: tokio::sync::mpsc::Sender<newt_engine::quick_open::QuickOpenUpdate>,
     ) -> Result<(), newt_common::Error> {
         if root.vfs_id == self.remote_vfs_id {
             let root = VfsPath::new(VfsId::ROOT, root.path);
@@ -489,14 +490,14 @@ impl Filesystem for HairpinFs {
     async fn list_files(
         &self,
         path: VfsPath,
-        options: newt_common::filesystem::ListFilesOptions,
+        options: newt_engine::filesystem::ListFilesOptions,
         batch_tx: Option<tokio::sync::mpsc::Sender<FileList>>,
     ) -> Result<FileList, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             // Wrap the batch channel to rewrite VFS IDs before forwarding
             let rewriting_tx = batch_tx.map(|outer_tx| {
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<FileList>(
-                    newt_common::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
+                    newt_engine::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
                 );
                 let vfs_id = self.remote_vfs_id;
                 tokio::spawn(async move {
@@ -524,7 +525,7 @@ impl Filesystem for HairpinFs {
     async fn roots(
         &self,
         vfs_id: VfsId,
-    ) -> Result<Vec<newt_common::vfs::RootInfo>, newt_common::Error> {
+    ) -> Result<Vec<newt_engine::vfs::RootInfo>, newt_common::Error> {
         if vfs_id == self.remote_vfs_id {
             self.local_fs.roots(VfsId::ROOT).await
         } else {
@@ -535,7 +536,7 @@ impl Filesystem for HairpinFs {
     async fn fs_stats(
         &self,
         path: VfsPath,
-    ) -> Result<Option<newt_common::vfs::FsStats>, newt_common::Error> {
+    ) -> Result<Option<newt_engine::vfs::FsStats>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .fs_stats(VfsPath::new(VfsId::ROOT, path.path))
@@ -568,12 +569,12 @@ impl Filesystem for HairpinFs {
     async fn revalidate(
         &self,
         vfs_id: VfsId,
-    ) -> Result<newt_common::vfs::RevalidationOutcome, newt_common::Error> {
+    ) -> Result<newt_engine::vfs::RevalidationOutcome, newt_common::Error> {
         if vfs_id == self.remote_vfs_id {
             // The hairpin VFS is a hand-back of the host's local FS to
             // the remote agent — local FS doesn't cache external state,
             // so revalidation is trivially fresh.
-            Ok(newt_common::vfs::RevalidationOutcome::Fresh)
+            Ok(newt_engine::vfs::RevalidationOutcome::Fresh)
         } else {
             self.inner.revalidate(vfs_id).await
         }
@@ -583,7 +584,7 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         follow: bool,
-    ) -> Result<newt_common::vfs::File, newt_common::Error> {
+    ) -> Result<newt_engine::vfs::File, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .file_info(VfsPath::new(VfsId::ROOT, path.path), follow)
@@ -608,7 +609,7 @@ impl Filesystem for HairpinFs {
     async fn get_property_sheet(
         &self,
         path: VfsPath,
-    ) -> Result<newt_common::vfs::PropertySheet, newt_common::Error> {
+    ) -> Result<newt_engine::vfs::PropertySheet, newt_common::Error> {
         self.inner.get_property_sheet(path).await
     }
 
@@ -617,7 +618,7 @@ impl Filesystem for HairpinFs {
         path: VfsPath,
         offset: u64,
         length: u64,
-    ) -> Result<newt_common::vfs::FileChunk, newt_common::Error> {
+    ) -> Result<newt_engine::vfs::FileChunk, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .read_range(VfsPath::new(VfsId::ROOT, path.path), offset, length)
@@ -630,7 +631,7 @@ impl Filesystem for HairpinFs {
     async fn open_read_at(
         &self,
         path: VfsPath,
-    ) -> Result<Box<dyn newt_common::vfs::VfsRandomReader>, newt_common::Error> {
+    ) -> Result<Box<dyn newt_engine::vfs::VfsRandomReader>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .open_read_at(VfsPath::new(VfsId::ROOT, path.path))
@@ -654,7 +655,7 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         data: Vec<u8>,
-    ) -> Result<newt_common::vfs::File, newt_common::Error> {
+    ) -> Result<newt_engine::vfs::File, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .write_file(VfsPath::new(VfsId::ROOT, path.path), data)
@@ -668,9 +669,9 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         offset: u64,
-        pattern: newt_common::find::SearchPattern,
+        pattern: newt_engine::find::SearchPattern,
         max_length: u64,
-    ) -> Result<Option<newt_common::find::SearchMatch>, newt_common::Error> {
+    ) -> Result<Option<newt_engine::find::SearchMatch>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .find_in_file(
@@ -772,7 +773,7 @@ struct HostDispatcher {
     /// from the agent into `MainWindowState.vfs_progress`. Same impl
     /// the local-mode `VfsRegistryManager` writes to, so the consumer
     /// side is identical regardless of session mode.
-    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
+    progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink>,
 }
 
 /// Dispatches `API_HOST_ASKPASS` from the agent to an `AskpassProvider`.
@@ -783,31 +784,31 @@ struct HostAskpassDispatcher {
 }
 
 #[async_trait::async_trait]
-impl newt_common::rpc::Dispatcher for HostAskpassDispatcher {
-    async fn invoke(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
-        if api == newt_common::api::API_HOST_ASKPASS {
-            let request: newt_common::askpass::AskpassRequest = newt_common::api::decode(&req);
+impl newt_rpc::Dispatcher for HostAskpassDispatcher {
+    async fn invoke(&self, api: newt_rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
+        if api == newt_engine::api::API_HOST_ASKPASS {
+            let request: newt_engine::askpass::AskpassRequest = newt_engine::api::decode(&req);
             let response = self.provider.prompt(request).await;
-            Some(newt_common::api::encode(&response).into())
+            Some(newt_engine::api::encode(&response).into())
         } else {
             None
         }
     }
 }
 
-impl newt_common::rpc::Dispatcher for HostDispatcher {
-    fn notify(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> bool {
+impl newt_rpc::Dispatcher for HostDispatcher {
+    fn notify(&self, api: newt_rpc::Api, req: bytes::Bytes) -> bool {
         if api == API_OPERATION_PROGRESS {
-            let progress: OperationProgress = newt_common::api::decode(&req);
+            let progress: OperationProgress = newt_engine::api::decode(&req);
             let keep = self.preferences.load().behavior.keep_finished_operations;
             apply_operation_progress(&self.operations, progress, keep);
             let _ = self.publisher.publish();
             true
-        } else if api == newt_common::api::API_VFS_PROGRESS {
+        } else if api == newt_engine::api::API_VFS_PROGRESS {
             let (vfs_id, progress): (
-                newt_common::vfs::VfsId,
-                Option<newt_common::vfs::VfsProgress>,
-            ) = newt_common::api::decode(&req);
+                newt_common::path::VfsId,
+                Option<newt_engine::vfs::VfsProgress>,
+            ) = newt_engine::api::decode(&req);
             // Sink does both the state update and the publish.
             self.progress_sink.report(vfs_id, progress);
             true
@@ -828,9 +829,9 @@ struct Services {
     terminal_client: Arc<dyn TerminalClient>,
     operations_client: Arc<dyn OperationsClient>,
     enricher_client: Arc<dyn EnricherClient>,
-    hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
-    quick_open_client: Arc<dyn newt_common::quick_open::QuickOpenClient>,
-    discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
+    hot_paths_provider: Arc<dyn newt_engine::hot_paths::HotPathsProvider>,
+    quick_open_client: Arc<dyn newt_engine::quick_open::QuickOpenClient>,
+    discovery_provider: Arc<dyn newt_engine::discovery::DiscoveryProvider>,
     initial_dir: VfsPath,
     connection: Option<Communicator>,
 }
@@ -840,9 +841,9 @@ fn create_local_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
-    sftp_askpass: Option<newt_common::vfs::mount::SftpAskpass>,
+    sftp_askpass: Option<newt_engine::vfs::mount::SftpAskpass>,
     askpass_provider: Arc<dyn AskpassProvider>,
-    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
+    progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink>,
     agent_resolver: Arc<dyn AgentResolver>,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
@@ -863,7 +864,7 @@ fn create_local_services(
             .find_local_agent_binary()
             .map_err(|e| e.to_string())
             .and_then(|cli_binary| {
-                newt_common::shell_control::ShellIntegration::start(&cli_binary, handler)
+                newt_engine::shell_control::ShellIntegration::start(&cli_binary, handler)
                     .map_err(|e| e.to_string())
             })
             .map_err(|e| log::warn!("shell integration disabled: {e}"))
@@ -875,7 +876,7 @@ fn create_local_services(
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
         shell_integration: shell_integration.clone(),
-        spooler: newt_common::spool::Spooler::new(Default::default()),
+        spooler: newt_engine::spool::Spooler::new(Default::default()),
     });
 
     let operations = operations.clone();
@@ -907,11 +908,11 @@ fn create_local_services(
                 mgr
             }
         }),
-        terminal_client: Arc::new(newt_common::terminal::Local::with_shell_integration(
+        terminal_client: Arc::new(newt_engine::terminal::Local::with_shell_integration(
             shell_integration,
         )),
-        operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
-        enricher_client: Arc::new(newt_common::enrich::Local::new(Arc::new(
+        operations_client: Arc::new(newt_engine::operation::Local::new(progress_tx, op_context)),
+        enricher_client: Arc::new(newt_engine::enrich::Local::new(Arc::new(
             Enrichers::new(registry.clone())
                 .with(Arc::new(GitEnricher::new(
                     preferences.load().environment.extra_path.clone(),
@@ -919,11 +920,11 @@ fn create_local_services(
                 .with(Arc::new(DuEnricher))
                 .with(Arc::new(PackageEnricher)),
         ))),
-        hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
-        quick_open_client: Arc::new(newt_common::quick_open::Local::new(Arc::new(
-            newt_common::quick_open::QuickOpen::new(registry.clone()),
+        hot_paths_provider: Arc::new(newt_engine::hot_paths::Local::new()),
+        quick_open_client: Arc::new(newt_engine::quick_open::Local::new(Arc::new(
+            newt_engine::quick_open::QuickOpen::new(registry.clone()),
         ))),
-        discovery_provider: Arc::new(newt_common::discovery::Local::new(
+        discovery_provider: Arc::new(newt_engine::discovery::Local::new(
             preferences.load().environment.extra_path.clone(),
         )),
         // A launch directory deleted from under the process leaves no
@@ -933,8 +934,8 @@ fn create_local_services(
             std::env::current_dir()
                 .ok()
                 .or_else(std::env::home_dir)
-                .map_or_else(newt_common::vfs::path::PathBuf::root, |dir| {
-                    newt_common::vfs::path::PathBuf::from_native(&dir)
+                .map_or_else(newt_common::path::PathBuf::root, |dir| {
+                    newt_common::path::PathBuf::from_native(&dir)
                 }),
         ),
         connection: None,
@@ -944,15 +945,15 @@ fn create_local_services(
 /// Build remote proxy services from a communicator.
 fn create_remote_services(communicator: Communicator) -> Services {
     Services {
-        fs: Arc::new(newt_common::filesystem::Remote::new(communicator.clone())),
+        fs: Arc::new(newt_engine::filesystem::Remote::new(communicator.clone())),
         shell_service: Arc::new(ShellRemote::new(communicator.clone())),
         vfs_manager: Arc::new(VfsManagerRemote::new(communicator.clone())),
-        terminal_client: Arc::new(newt_common::terminal::Remote::new(communicator.clone())),
-        operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
-        enricher_client: Arc::new(newt_common::enrich::Remote::new(communicator.clone())),
-        hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator.clone())),
-        quick_open_client: Arc::new(newt_common::quick_open::Remote::new(communicator.clone())),
-        discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator.clone())),
+        terminal_client: Arc::new(newt_engine::terminal::Remote::new(communicator.clone())),
+        operations_client: Arc::new(newt_engine::operation::Remote::new(communicator.clone())),
+        enricher_client: Arc::new(newt_engine::enrich::Remote::new(communicator.clone())),
+        hot_paths_provider: Arc::new(newt_engine::hot_paths::Remote::new(communicator.clone())),
+        quick_open_client: Arc::new(newt_engine::quick_open::Remote::new(communicator.clone())),
+        discovery_provider: Arc::new(newt_engine::discovery::Remote::new(communicator.clone())),
         initial_dir: VfsPath::root(VfsId::ROOT),
         connection: Some(communicator),
     }
@@ -968,10 +969,10 @@ fn create_rpc_services(
     preferences: &crate::preferences::PreferencesHandle,
     host_access: bool,
     askpass_provider: Arc<dyn AskpassProvider>,
-    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
+    progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink>,
     agent_resolver: Arc<dyn AgentResolver>,
 ) -> Services {
-    use newt_common::rpc::DispatcherExt;
+    use newt_rpc::DispatcherExt;
 
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
@@ -988,12 +989,12 @@ fn create_rpc_services(
     };
     let communicator = Communicator::with_dispatcher(stream, |outbox| {
         let host_vfs = host_access.then(|| {
-            let local = Arc::new(newt_common::vfs::LocalVfs::new());
-            newt_common::api::VfsDispatcher::new(local, outbox.clone())
+            let local = Arc::new(newt_engine::vfs::LocalVfs::new());
+            newt_engine::api::VfsDispatcher::new(local, outbox.clone())
         });
         host_dispatcher
             .chain(askpass_dispatcher)
-            .chain(newt_common::api::AgentFetchDispatcher::new(
+            .chain(newt_engine::api::AgentFetchDispatcher::new(
                 agent_resolver,
                 outbox.clone(),
             ))
@@ -1016,8 +1017,8 @@ enum AgentProcess {
     /// Raw Win32 process handle (WSL `WslLaunch`), wrapped because it can't
     /// be adopted into a `tokio::process::Child`.
     #[cfg(windows)]
-    Win(newt_common::win_proc::WinProcess),
-    Elevated(newt_common::elevation::AgentProcess),
+    Win(newt_engine::win_proc::WinProcess),
+    Elevated(newt_engine::elevation::AgentProcess),
 }
 
 impl AgentProcess {
@@ -1039,11 +1040,11 @@ struct ChildConnection {
     stream: DynStream,
     /// Askpass listener tied to the ssh process; dropped when the connection
     /// tears down. `None` for elevated / WSL mode (no askpass).
-    _askpass: Option<newt_common::askpass::AskpassListener>,
+    _askpass: Option<newt_engine::askpass::AskpassListener>,
 }
 
-impl From<newt_common::elevation::ElevatedAgent> for ChildConnection {
-    fn from(agent: newt_common::elevation::ElevatedAgent) -> Self {
+impl From<newt_engine::elevation::ElevatedAgent> for ChildConnection {
+    fn from(agent: newt_engine::elevation::ElevatedAgent) -> Self {
         Self {
             child: AgentProcess::Elevated(agent.process),
             stderr: agent.stderr,
@@ -1053,8 +1054,8 @@ impl From<newt_common::elevation::ElevatedAgent> for ChildConnection {
     }
 }
 
-impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
-    fn from(conn: newt_common::connect::SpawnedAgent) -> Self {
+impl From<newt_engine::connect::SpawnedAgent> for ChildConnection {
+    fn from(conn: newt_engine::connect::SpawnedAgent) -> Self {
         Self {
             child: AgentProcess::Child(conn.child),
             stderr: conn.stderr,
@@ -1069,7 +1070,7 @@ impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
 fn spawn_child_watcher(
     mut child: AgentProcess,
     stderr: Option<DynStderr>,
-    askpass_listener: Option<newt_common::askpass::AskpassListener>,
+    askpass_listener: Option<newt_engine::askpass::AskpassListener>,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
     connection_status: ConnectionState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -1173,7 +1174,7 @@ pub(super) async fn connect(
             // then inherit the process environment and fail loudly if a
             // password is needed.
             let sftp_askpass = match agent_resolver.find_local_agent_binary() {
-                Ok(askpass_binary) => Some(newt_common::vfs::mount::SftpAskpass {
+                Ok(askpass_binary) => Some(newt_engine::vfs::mount::SftpAskpass {
                     askpass_binary,
                     provider: askpass_provider.clone(),
                 }),
@@ -1185,7 +1186,7 @@ pub(super) async fn connect(
                     None
                 }
             };
-            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+            let progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
                     state.mount_log.clone(),
@@ -1209,9 +1210,9 @@ pub(super) async fn connect(
                 publisher: publisher.clone(),
             });
             let extra_path = preferences.load().environment.extra_path.clone();
-            let conn: ChildConnection = newt_common::connect::spawn(
+            let conn: ChildConnection = newt_engine::connect::spawn(
                 spec,
-                newt_common::connect::AgentMode::Session,
+                newt_engine::connect::AgentMode::Session,
                 fresh_agent,
                 &extra_path,
                 agent_resolver.as_ref(),
@@ -1221,7 +1222,7 @@ pub(super) async fn connect(
             .await?
             .into();
             conn_log.log("Setting up RPC services...");
-            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+            let progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
                     state.mount_log.clone(),
@@ -1242,10 +1243,10 @@ pub(super) async fn connect(
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
-            let conn: ChildConnection = newt_common::elevation::spawn(agent_resolver.as_ref())
+            let conn: ChildConnection = newt_engine::elevation::spawn(agent_resolver.as_ref())
                 .await?
                 .into();
-            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+            let progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
                     state.mount_log.clone(),
@@ -1275,7 +1276,7 @@ pub(super) async fn connect(
             spawn_stderr_reader(spawn.stderr, conn_log.clone());
             conn_log.log("Setting up RPC services...");
             let stream: DynStream = tokio_duplex::Duplex::new(spawn.stdout, spawn.stdin);
-            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+            let progress_sink: Arc<dyn newt_engine::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
                     state.mount_log.clone(),
@@ -1352,9 +1353,9 @@ pub(super) async fn connect(
     let root_meta = if connection_target.is_remote() {
         PathStyle::Unix.encode()
     } else {
-        newt_common::vfs::encode_mount_meta(
+        newt_engine::vfs::encode_mount_meta(
             PathStyle::host(),
-            newt_common::vfs::NamedStreams::host(),
+            newt_engine::vfs::NamedStreams::host(),
         )
     };
     let mut initial_mounted = HashMap::new();
@@ -1378,20 +1379,20 @@ pub(super) async fn connect(
         // the request so the agent's `RemoteVfs` answers descriptor queries
         // correctly, and round-trips back in the response for our own
         // bookkeeping.
-        let client_local_meta = newt_common::vfs::encode_mount_meta(
+        let client_local_meta = newt_engine::vfs::encode_mount_meta(
             PathStyle::host(),
-            newt_common::vfs::NamedStreams::host(),
+            newt_engine::vfs::NamedStreams::host(),
         );
         match services
             .vfs_manager
-            .mount(newt_common::vfs::MountRequest::Remote {
+            .mount(newt_engine::vfs::MountRequest::Remote {
                 mount_meta: client_local_meta,
             })
             .await
         {
             Ok(resp) => {
                 log::info!("remote VFS mounted as vfs_id={:?}", resp.vfs_id);
-                if let Some(desc) = newt_common::vfs::lookup_descriptor(&resp.type_name) {
+                if let Some(desc) = newt_engine::vfs::lookup_descriptor(&resp.type_name) {
                     initial_mounted.insert(
                         resp.vfs_id,
                         MountedVfsInfo {
@@ -1413,8 +1414,8 @@ pub(super) async fn connect(
                 });
                 services.quick_open_client = Arc::new(HairpinQuickOpen {
                     remote_vfs_id: resp.vfs_id,
-                    local: newt_common::quick_open::Local::new(Arc::new(
-                        newt_common::quick_open::QuickOpen::new(local_registry.clone()),
+                    local: newt_engine::quick_open::Local::new(Arc::new(
+                        newt_engine::quick_open::QuickOpen::new(local_registry.clone()),
                     )),
                     inner: services.quick_open_client,
                 });

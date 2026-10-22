@@ -523,9 +523,9 @@ pub enum ArchiveFormatPref {
     TarZst,
 }
 
-impl From<ArchiveFormatPref> for newt_common::operation::ArchiveFormat {
+impl From<ArchiveFormatPref> for newt_engine::operation::ArchiveFormat {
     fn from(pref: ArchiveFormatPref) -> Self {
-        use newt_common::operation::ArchiveFormat;
+        use newt_engine::operation::ArchiveFormat;
         match pref {
             ArchiveFormatPref::Zip => ArchiveFormat::Zip,
             ArchiveFormatPref::SevenZ => ArchiveFormat::SevenZ,

@@ -1,5 +1,6 @@
-use newt_common::operation::{CopyOptions, OperationRequest};
-use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::operation::{CopyOptions, OperationRequest};
+use newt_engine::vfs::{MountRequest, PathStyle};
 
 use tauri::Manager;
 
@@ -54,7 +55,7 @@ pub async fn navigate(
         if root_is_host_style && native.is_absolute() {
             Some(VfsPath::new(
                 VfsId::ROOT,
-                newt_common::vfs::path::PathBuf::from_native(native),
+                newt_common::path::PathBuf::from_native(native),
             ))
         } else {
             None
@@ -571,10 +572,10 @@ async fn browse_request(
     }
     let header = ctx
         .fs()?
-        .read_range(origin.clone(), 0, newt_common::vfs::SNIFF_LEN)
+        .read_range(origin.clone(), 0, newt_engine::vfs::SNIFF_LEN)
         .await?
         .data;
-    newt_common::vfs::sniff_mount_request(&header, origin)
+    newt_engine::vfs::sniff_mount_request(&header, origin)
         .ok_or_else(|| Error::Custom(format!("{name} is not an archive or a disc image")))
 }
 
@@ -640,10 +641,7 @@ async fn with_local_copy(
 
     let temp_dir = tempfile::tempdir_in(std::env::temp_dir())?.keep();
     let dest_path = temp_dir.join(filename);
-    let dest_vfs_path = VfsPath::new(
-        host_vfs,
-        newt_common::vfs::path::PathBuf::from_native(&temp_dir),
-    );
+    let dest_vfs_path = VfsPath::new(host_vfs, newt_common::path::PathBuf::from_native(&temp_dir));
 
     super::operations::start_operation_with_callback(
         ctx.clone(),
@@ -956,7 +954,7 @@ pub fn cmd_compute_size(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
     if !keys.is_empty() {
         tauri::async_runtime::spawn(pane.run_manual_enrichment(
             vec!["du".to_string()],
-            newt_common::enrich::EnrichScope::Entries(keys),
+            newt_engine::enrich::EnrichScope::Entries(keys),
         ));
     }
     Ok(())
@@ -968,7 +966,7 @@ pub fn cmd_compute_all_sizes(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let pane = ctx.panes().require(pane_handle)?;
     tauri::async_runtime::spawn(pane.run_manual_enrichment(
         vec!["du".to_string()],
-        newt_common::enrich::EnrichScope::AllEntries,
+        newt_engine::enrich::EnrichScope::AllEntries,
     ));
     Ok(())
 }

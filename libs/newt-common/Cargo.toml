@@ -3,120 +3,17 @@ name = "newt-common"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Shared types, RPC protocol, VFS traits, and operation logic for Newt"
-
-[features]
-# Elevated sessions run a copy of the agent staged in $XDG_RUNTIME_DIR. For
-# the AppImage only: root can't see the user's FUSE mount it runs from.
-elevate-agent-copy = []
+description = "Foundational types shared by every Newt crate: errors and platform-independent paths"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-notify = "8"
-parking_lot = "0.12"
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-async-trait = "0.1"
-log = "0.4"
-bytes = { version = "1", features = ["std", "serde"] }
-byteorder = "1.5"
-futures = "0.3"
-tokio-stream = "0.1"
-bincode = "1.3.3"
-filetime = "0.2"
-inventory = "0.3"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1"
-aws-sdk-sts = "1"
-aws-types = "1"
-regex = "1"
-caseless = "0.2"
-unicode-normalization = "0.1"
-memchr = "2"
-globset = "0.4"
-dirs = "7"
-url = "2"
-openssh-sftp-client = "0.15"
-openssh-sftp-protocol-error = "0.1.1"
-iluvatar = { version = "0.7", features = ["tokio"] }
-newt-archive = { path = "../newt-archive" }
-newt-disc = { path = "../newt-disc" }
-blake3 = "1"
-crc32fast = "1"
-serde_json = "1"
-tokio-duplex = "1.0.1"
-flate2 = "1.1.9"
-tempfile = "3.27.0"
-specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }
-serde_bytes = "0.11"
-hyper = { version = "1", features = ["http1", "server", "client"] }
-clap = { version = "4", features = ["derive", "wrap_help"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-nucleo-matcher = { version = "0.3", default-features = false, features = ["unicode-normalization", "unicode-casefold"] }
-ignore = "0.4"
-percent-encoding = "2"
-clap_complete = "4"
-jiff = "0.2"
+tokio = { version = "1", features = ["rt"] }
+specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1"
-# Paused clocks for tests that simulate slow upstreams.
-tokio = { version = "1", features = ["test-util"] }
-# A fake HTTP client standing in for S3 in the S3 writer's tests.
-aws-smithy-runtime-api = { version = "1", features = ["client"] }
-# Verifies archive-pack output (our ZipWriter) in operation tests.
-zip = "8"
 
 [target.'cfg(unix)'.dependencies]
-xattr = "1.6.1"
-expanduser = "*"
 libc = "0.2"
-nix = { version = "0.31", features = ["fs", "socket", "uio", "user"] }
-pty-process = { path = "../pty-process" }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_NetworkManagement_WNet",
-    "Win32_Storage_FileSystem",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
-    "Win32_System_WindowsProgramming",
-    "Win32_System_Console",
-    "Win32_System_Threading",
-    "Win32_System_Pipes",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-    "Win32_System_Registry",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
-] }
-uuid = { version = "1", features = ["v4"] }
-windows = { version = "0.62", features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_UI_Shell",
-] }
-windows-core = "0.62"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-quick-xml = "0.42"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-plist = "1"
-objc2-foundation = { version = "0.3", default-features = false, features = [
-    "std",
-    "FoundationErrors",
-    "NSError",
-    "NSFileManager",
-    "NSString",
-    "NSURL",
-] }
-core-foundation = "0.10"
-core-foundation-sys = "0.8"
-fsevent-sys = "4"
+nix = { version = "0.31" }

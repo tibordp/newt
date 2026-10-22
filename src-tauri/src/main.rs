@@ -1040,8 +1040,8 @@ fn main() {
     // owning session instead of launching the app. The verb requirement
     // keeps ordinary launches (`newt --target ssh:…`) untouched even when
     // run from an integrated terminal.
-    if newt_common::shell_control::is_cli_invocation(true, true) {
-        std::process::exit(newt_common::shell_control::run_cli());
+    if newt_engine::shell_control::is_cli_invocation(true, true) {
+        std::process::exit(newt_engine::shell_control::run_cli());
     }
 
     let args = Args::parse();
@@ -1067,7 +1067,7 @@ fn main() {
     pretty_env_logger::init();
 
     // Before tauri::Builder spawns anything — `set_var` is not thread-safe.
-    newt_common::locale::ensure_locale();
+    newt_engine::locale::ensure_locale();
 
     // Connection target for the non-profile cases — `--profile` is resolved
     // inside `setup` once the preferences directory is known.

@@ -12,13 +12,14 @@ pub mod terminal;
 #[cfg(windows)]
 pub mod wsl_launch;
 
-use newt_common::filesystem::Filesystem;
-use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
-use newt_common::shell::ShellService;
-use newt_common::terminal::TerminalClient;
-use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::UserGroup;
-use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
+use newt_common::path::{VfsId, VfsPath};
+use newt_engine::filesystem::Filesystem;
+use newt_engine::operation::{OperationId, OperationProgress, OperationsClient};
+use newt_engine::shell::ShellService;
+use newt_engine::terminal::TerminalClient;
+use newt_engine::terminal::TerminalHandle;
+use newt_engine::vfs::UserGroup;
+use newt_engine::vfs::{MountedVfsInfo, all_descriptors, lookup_descriptor};
 use parking_lot::{Mutex, RwLock};
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -268,10 +269,10 @@ pub enum OperationStatus {
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationIssueInfo {
     pub issue_id: u64,
-    pub kind: newt_common::operation::IssueKind,
+    pub kind: newt_engine::operation::IssueKind,
     pub message: String,
     pub detail: Option<String>,
-    pub actions: Vec<newt_common::operation::IssueAction>,
+    pub actions: Vec<newt_engine::operation::IssueAction>,
 }
 
 #[derive(Clone, serde::Serialize, specta::Type)]
@@ -429,7 +430,7 @@ impl serde::Serialize for Operations {
 /// pane status bar. Mutated by `LocalProgressSink` from any context;
 /// readers serialize through the inner `RwLock`.
 #[derive(Clone, Default)]
-pub struct VfsProgressState(Arc<RwLock<HashMap<VfsId, newt_common::vfs::VfsProgress>>>);
+pub struct VfsProgressState(Arc<RwLock<HashMap<VfsId, newt_engine::vfs::VfsProgress>>>);
 
 impl VfsProgressState {
     pub fn clear_for(&self, vfs_id: VfsId) {
@@ -512,8 +513,8 @@ impl LocalProgressSink {
     }
 }
 
-impl newt_common::vfs::VfsProgressSink for LocalProgressSink {
-    fn report(&self, vfs_id: VfsId, progress: Option<newt_common::vfs::VfsProgress>) {
+impl newt_engine::vfs::VfsProgressSink for LocalProgressSink {
+    fn report(&self, vfs_id: VfsId, progress: Option<newt_engine::vfs::VfsProgress>) {
         {
             let mut map = self.state.0.write();
             match progress {
@@ -553,7 +554,7 @@ pub enum DeleteConfirmMode {
 /// Pack-dialog defaults sourced from `ArchivePreferences`.
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ArchiveDialogDefaults {
-    pub format: newt_common::operation::ArchiveFormat,
+    pub format: newt_engine::operation::ArchiveFormat,
     pub preserve_symlinks: bool,
     pub zip_level: i32,
     pub sevenz_level: i32,
@@ -573,7 +574,7 @@ pub enum PropertySheetState {
     Hidden,
     Loading,
     Loaded {
-        sheet: newt_common::vfs::PropertySheet,
+        sheet: newt_engine::vfs::PropertySheet,
     },
     Failed {
         error: String,
@@ -620,7 +621,7 @@ pub enum ModalDataKind {
         device_id: Option<u64>,
         is_dir: bool,
         /// Single-selection only.
-        symlink: Option<newt_common::vfs::Symlink>,
+        symlink: Option<newt_engine::vfs::Symlink>,
         /// Whether the VFS supports metadata changes (chmod/chown)
         can_set_metadata: bool,
         /// Bits that are ON in all selected files
@@ -641,7 +642,7 @@ pub enum ModalDataKind {
         sheet: PropertySheetState,
         /// Volume stats + classification. `Some` only for a volume root
         /// (DirectoryProperties at a root, or the RootProperties dialog).
-        fs_stats: Option<newt_common::vfs::FsStats>,
+        fs_stats: Option<newt_engine::vfs::FsStats>,
     },
     Navigate {
         path: VfsPath,
@@ -674,10 +675,10 @@ pub enum ModalDataKind {
         /// filename character and a directory may be called `\`.
         name_separators: String,
         /// The operation defaults with the sticky toggles laid over them.
-        defaults: newt_common::operation::CopyOptions,
+        defaults: newt_engine::operation::CopyOptions,
         /// The same with nothing remembered: what the toggles are until
         /// changed.
-        stock: newt_common::operation::CopyOptions,
+        stock: newt_engine::operation::CopyOptions,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -733,13 +734,13 @@ pub enum ModalDataKind {
         /// Params of the search being refined (cmd+f inside a search) —
         /// the dialog opens pre-filled with these. `None` for a fresh
         /// search.
-        prefill: Option<newt_common::vfs::search::SearchParams>,
+        prefill: Option<newt_engine::vfs::search::SearchParams>,
         /// Sticky last-used toggles for a fresh search, seeded from runtime
         /// state. Ignored when `prefill` is present (refine restores instead).
         defaults: crate::runtime_state::SearchDefaults,
         /// Which metadata the root's entries have, so filters on what they
         /// lack can be disabled.
-        metadata_traits: newt_common::vfs::MetadataTraits,
+        metadata_traits: newt_engine::vfs::MetadataTraits,
     },
     /// Quick sort menu (keyboard-launched, anchored to the pane header).
     SortMenu {
@@ -824,7 +825,7 @@ pub enum ModalDataKind {
         root: VfsPath,
         root_display: String,
         /// The latest ranking; `None` until the first arrives.
-        update: Option<newt_common::quick_open::QuickOpenUpdate>,
+        update: Option<newt_engine::quick_open::QuickOpenUpdate>,
         #[serde(skip)]
         run: quick_open::QuickOpenRun,
     },
@@ -979,10 +980,10 @@ pub struct VfsTarget {
     pub mount_dialog: Option<String>,
     /// Where selecting a drive or a volume lands. `None` lands on the
     /// filesystem's default `initial_path`.
-    pub path: Option<newt_common::vfs::path::PathBuf>,
+    pub path: Option<newt_common::path::PathBuf>,
     /// A drive's classification (kind, label, UNC/subst target),
     /// recorded at mount time on the owning side.
-    pub volume: Option<newt_common::vfs::VolumeInfo>,
+    pub volume: Option<newt_engine::vfs::VolumeInfo>,
     /// Free bytes on the target's volume. Always `None` at open — the
     /// selector opens instantly and a background fetch fills these in
     /// (a dead network drive must not stall the dropdown).
@@ -1033,12 +1034,12 @@ impl TauriAskpassProvider {
 }
 
 #[async_trait::async_trait]
-impl newt_common::askpass::AskpassProvider for TauriAskpassProvider {
+impl newt_engine::askpass::AskpassProvider for TauriAskpassProvider {
     async fn prompt(
         &self,
-        req: newt_common::askpass::AskpassRequest,
-    ) -> newt_common::askpass::AskpassResponse {
-        let is_secret = newt_common::askpass::is_secret_prompt(&req);
+        req: newt_engine::askpass::AskpassRequest,
+    ) -> newt_engine::askpass::AskpassResponse {
+        let is_secret = newt_engine::askpass::is_secret_prompt(&req);
         let (tx, rx) = tokio::sync::oneshot::channel();
         *self.state.0.write() = Some(AskpassPrompt {
             id: self
@@ -1064,7 +1065,7 @@ impl newt_common::askpass::AskpassProvider for TauriAskpassProvider {
         *self.response_slot.lock() = None;
         let _ = self.publisher.publish();
 
-        newt_common::askpass::AskpassResponse(result)
+        newt_engine::askpass::AskpassResponse(result)
     }
 }
 
@@ -1184,7 +1185,7 @@ specta_as!(ModalState => Option<ModalData>);
 specta_as!(DndState => Option<DndData>);
 specta_as!(DisplayOptions => DisplayOptionsInner);
 specta_as!(Operations => HashMap<String, OperationState>);
-specta_as!(VfsProgressState => HashMap<String, newt_common::vfs::VfsProgress>);
+specta_as!(VfsProgressState => HashMap<String, newt_engine::vfs::VfsProgress>);
 specta_as!(MountLogState => Vec<String>);
 specta_as!(MountSummaryState => MountSummary);
 
@@ -1603,7 +1604,7 @@ impl MainWindowContext {
     }
 
     /// Connect the session. `fresh_agent` re-uploads the agent where the
-    /// target caches one (see [`newt_common::connect::spawn`]).
+    /// target caches one (see [`newt_engine::connect::spawn`]).
     pub async fn connect(
         &self,
         agent_resolver: Arc<dyn AgentResolver>,
@@ -1615,7 +1616,7 @@ impl MainWindowContext {
         let askpass_state = &state.askpass;
         let askpass_response_slot = &self.inner.askpass_response;
 
-        let askpass_provider: Arc<dyn newt_common::askpass::AskpassProvider> =
+        let askpass_provider: Arc<dyn newt_engine::askpass::AskpassProvider> =
             Arc::new(TauriAskpassProvider::new(
                 askpass_state.clone(),
                 askpass_response_slot.clone(),
@@ -1761,19 +1762,19 @@ impl MainWindowContext {
 
     pub fn discovery_provider(
         &self,
-    ) -> Result<Arc<dyn newt_common::discovery::DiscoveryProvider>, Error> {
+    ) -> Result<Arc<dyn newt_engine::discovery::DiscoveryProvider>, Error> {
         self.with_session(|s| s.discovery_provider.clone())
     }
 
     pub fn hot_paths_provider(
         &self,
-    ) -> Result<Arc<dyn newt_common::hot_paths::HotPathsProvider>, Error> {
+    ) -> Result<Arc<dyn newt_engine::hot_paths::HotPathsProvider>, Error> {
         self.with_session(|s| s.hot_paths_provider.clone())
     }
 
     pub fn quick_open_client(
         &self,
-    ) -> Result<Arc<dyn newt_common::quick_open::QuickOpenClient>, Error> {
+    ) -> Result<Arc<dyn newt_engine::quick_open::QuickOpenClient>, Error> {
         self.with_session(|s| s.quick_open_client.clone())
     }
 
@@ -1952,11 +1953,11 @@ impl MainWindowContext {
 
     pub async fn create_terminal(
         &self,
-        path: Option<&newt_common::vfs::path::Path>,
+        path: Option<&newt_common::path::Path>,
     ) -> Result<Arc<Terminal>, Error> {
         let handle = self
             .terminal_client()?
-            .create(newt_common::terminal::TerminalOptions {
+            .create(newt_engine::terminal::TerminalOptions {
                 working_dir: path.map(|p| p.to_owned()),
                 ..Default::default()
             })
@@ -1998,7 +1999,7 @@ impl MainWindowContext {
     /// `split_roots`: what [`split_roots`](Self::split_roots) answered.
     pub fn compute_vfs_targets(
         &self,
-        split_roots: &HashMap<VfsId, Vec<newt_common::vfs::RootInfo>>,
+        split_roots: &HashMap<VfsId, Vec<newt_engine::vfs::RootInfo>>,
     ) -> Result<Vec<VfsTarget>, Error> {
         /// Maps VFS type_name → dialog name for types that need user input to mount.
         fn mount_dialog_for(type_name: &str) -> Option<&'static str> {
@@ -2108,8 +2109,8 @@ impl MainWindowContext {
 
     pub async fn mount_vfs(
         &self,
-        request: newt_common::vfs::MountRequest,
-    ) -> Result<newt_common::vfs::MountResponse, Error> {
+        request: newt_engine::vfs::MountRequest,
+    ) -> Result<newt_engine::vfs::MountResponse, Error> {
         // Archive dedup: if there's already a mount with the same origin,
         // reuse it. With history-anchored auto-unmount, an archive the
         // user navigates back into is almost always still mounted; this
@@ -2121,7 +2122,7 @@ impl MainWindowContext {
         //
         // Staleness is handled separately by `Vfs::revalidate`, called by
         // the navigation layer when a pane re-enters this VFS.
-        if let newt_common::vfs::MountRequest::Archive { origin, .. } = &request
+        if let newt_engine::vfs::MountRequest::Archive { origin, .. } = &request
             && let Some(existing) = self.with_session(|s| {
                 s.mounted_vfs.read().iter().find_map(|(_, info)| {
                     // Match on type too — searches also carry an origin
@@ -2130,7 +2131,7 @@ impl MainWindowContext {
                     if info.descriptor.type_name() == "archive"
                         && info.origin.as_ref() == Some(origin)
                     {
-                        Some(newt_common::vfs::MountResponse {
+                        Some(newt_engine::vfs::MountResponse {
                             vfs_id: info.vfs_id,
                             type_name: info.descriptor.type_name().into(),
                             mount_meta: info.mount_meta.clone(),
@@ -2231,7 +2232,7 @@ impl MainWindowContext {
     /// The drives and shares of every split-root filesystem the selector
     /// lists, asked of each as they are now. One that can't answer lists
     /// none.
-    pub async fn split_roots(&self) -> HashMap<VfsId, Vec<newt_common::vfs::RootInfo>> {
+    pub async fn split_roots(&self) -> HashMap<VfsId, Vec<newt_engine::vfs::RootInfo>> {
         let ids: Vec<VfsId> = self
             .with_session(|s| {
                 s.mounted_vfs
@@ -2595,12 +2596,12 @@ mod operation_tests {
     fn issue(id: OperationId) -> OperationProgress {
         OperationProgress::Issue {
             id,
-            issue: newt_common::operation::OperationIssue {
+            issue: newt_engine::operation::OperationIssue {
                 issue_id: 1,
-                kind: newt_common::operation::IssueKind::AlreadyExists,
+                kind: newt_engine::operation::IssueKind::AlreadyExists,
                 message: "File already exists: a".into(),
                 detail: None,
-                actions: vec![newt_common::operation::IssueAction::Skip],
+                actions: vec![newt_engine::operation::IssueAction::Skip],
             },
         }
     }

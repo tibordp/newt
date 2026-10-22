@@ -1,5 +1,5 @@
 //! Connect-dialog discovery commands. The enumerators themselves live in
-//! `newt_common::discovery` (symmetric Local/Remote service); these handlers
+//! `newt_engine::discovery` (symmetric Local/Remote service); these handlers
 //! only pick which side runs them: window-scoped connections open from this
 //! host, pane-scoped agent mounts open from the session owner — so in a
 //! remote session the dialog lists the containers/hosts/pods the mount
@@ -17,7 +17,7 @@ pub mod wsl;
 
 use std::sync::Arc;
 
-use newt_common::discovery::{
+use newt_engine::discovery::{
     ContainerEntry, DiscoveryProvider, DiscoveryResult, KubePodEntry, SshHostEntry,
 };
 
@@ -34,7 +34,7 @@ fn provider(
         // Pane mounts are established by the session owner.
         OpenIn::Pane => ctx.discovery_provider(),
         // New windows are spawned from this host.
-        OpenIn::Window => Ok(Arc::new(newt_common::discovery::Local::new(
+        OpenIn::Window => Ok(Arc::new(newt_engine::discovery::Local::new(
             global_ctx
                 .preferences()
                 .settings()

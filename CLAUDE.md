@@ -14,7 +14,9 @@ Frontend (React/TS)  ──Tauri IPC──>  Tauri Backend (Rust)  ──stdin/s
 - **Frontend** (`src/`): React UI — dual file panes, terminal (xterm.js), modals, operations panel.
 - **Tauri backend** (`src-tauri/`): Window management, state (`MainWindowState`), command handlers. Pushes state to frontend via `UpdatePublisher` (treediff → Immer-compatible patches).
 - **Agent** (`libs/newt-agent/`): Separate binary for remoting scenarios (SSH, elevated/pkexec). Communicates with the Tauri backend via a custom binary RPC protocol (bincode over stdin/stdout).
-- **Common library** (`libs/newt-common/`): Shared types, RPC protocol, filesystem/terminal/operation trait abstractions with both Local and Remote implementations.
+- **Engine** (`libs/newt-engine/`): Filesystem/terminal/operation trait abstractions with both Local and Remote implementations, VFS backends, and the `api` services on top of RPC.
+- **RPC** (`libs/newt-rpc/`): The binary RPC protocol (`Communicator`, `Dispatcher`, streams), independent of what is sent over it.
+- **Common** (`libs/newt-common/`): Foundational types every crate shares — `Error`/`ErrorKind` and the platform-independent `Path`/`PathBuf`/`VfsPath`. Nothing with behaviour beyond the types themselves (no traits, no I/O) belongs here.
 
 ### Sessions
 
@@ -22,7 +24,7 @@ One OS process hosts every window. A **session** is a MainWindow together with t
 
 ### Local vs Remote mode
 
-All filesystem, terminal, and operation functionality is accessed through traits (`Filesystem`, `TerminalClient`, `OperationsClient`, etc.) defined in `newt-common`. These have two implementations:
+All filesystem, terminal, and operation functionality is accessed through traits (`Filesystem`, `TerminalClient`, `OperationsClient`, etc.) defined in `newt-engine`. These have two implementations:
 
 - **Local mode** (default): The Tauri backend uses the Local implementations directly in-process. No agent subprocess is spawned. There is no serialization overhead.
 - **Remote/Elevated mode**: The entire session runs on the remote host (or with elevated privileges). The Tauri backend uses Remote proxy implementations that forward calls over the binary RPC protocol to an agent subprocess (connected via SSH or pkexec). Terminals, file operations, and VFS mounts all originate from the agent side.
@@ -41,7 +43,7 @@ Do not add protocol-version negotiation, backward-compatibility layers, tolerant
 
 Transport-level failures such as EOF, subprocess termination, or an unavailable connection may still be represented as operational errors where appropriate. This does not apply to malformed or semantically impossible protocol data. The agent lives only for the duration of the session, then terminates. 
 
-`std::path::Path`/`PathBuf` must **never** appear on a serde-serialized type that crosses the agent↔host RPC boundary (anything sent via the `Communicator` or an `api`/`VfsDescriptor` payload). Use `newt_common::vfs::path::PathBuf` (implements `specta::Type` + serde) or `String`. Native conversion happens only on the side that physically owns the filesystem. Treat this as a litmus test whenever touching an RPC/`api` type or adding a path field — audit the whole type, don't symptom-fix one field (`agent_resolver` host-local paths are exempt — never serialized).
+`std::path::Path`/`PathBuf` must **never** appear on a serde-serialized type that crosses the agent↔host RPC boundary (anything sent via the `Communicator` or an `api`/`VfsDescriptor` payload). Use `newt_common::path::PathBuf` (implements `specta::Type` + serde) or `String`. Native conversion happens only on the side that physically owns the filesystem. Treat this as a litmus test whenever touching an RPC/`api` type or adding a path field — audit the whole type, don't symptom-fix one field (`agent_resolver` host-local paths are exempt — never serialized).
 
 ## UX: Keyboard-Centric Design
 
