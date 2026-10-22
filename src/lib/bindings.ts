@@ -4570,7 +4570,7 @@ export type TerminalPreferences = {
  */
 font_family: string; 
 /**
- * Font size of the built-in terminals, in points.
+ * Font size of the built-in terminals, in pixels.
  */
 font_size: number; 
 /**

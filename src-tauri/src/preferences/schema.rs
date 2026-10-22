@@ -84,7 +84,7 @@ pub struct TerminalPreferences {
     /// one installed is used.
     #[schemars(title = "Font")]
     pub font_family: String,
-    /// Font size of the built-in terminals, in points.
+    /// Font size of the built-in terminals, in pixels.
     #[schemars(title = "Font Size", range(min = 6, max = 72))]
     pub font_size: u32,
     /// Lines a terminal keeps above the screen to scroll back to.
@@ -94,20 +94,22 @@ pub struct TerminalPreferences {
 
 /// Each platform's own terminal font, then its predecessors. On Linux,
 /// fontconfig stands Liberation Mono in for Courier New, so it stays off
-/// the list.
+/// the list; the size matches the UI's 13px, which reads as GTK's 11pt.
 #[cfg(target_os = "macos")]
-const TERMINAL_FONT: &str = r#"Menlo, Monaco, "Courier New", monospace"#;
+const TERMINAL_FONT: (&str, u32) = (r#"Menlo, Monaco, "Courier New", monospace"#, 12);
 #[cfg(windows)]
-const TERMINAL_FONT: &str = r#""Cascadia Mono", Consolas, "Courier New", monospace"#;
+const TERMINAL_FONT: (&str, u32) = (r#""Cascadia Mono", Consolas, "Courier New", monospace"#, 12);
 #[cfg(not(any(target_os = "macos", windows)))]
-const TERMINAL_FONT: &str =
-    r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#;
+const TERMINAL_FONT: (&str, u32) = (
+    r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#,
+    13,
+);
 
 impl Default for TerminalPreferences {
     fn default() -> Self {
         Self {
-            font_family: TERMINAL_FONT.into(),
-            font_size: 12,
+            font_family: TERMINAL_FONT.0.into(),
+            font_size: TERMINAL_FONT.1,
             scrollback: 1000,
         }
     }

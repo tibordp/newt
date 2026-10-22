@@ -1177,7 +1177,7 @@ All terminals are always mounted in the DOM but only the active one is visible. 
 
 - **xterm.js**: Full VT100/ANSI terminal emulation with 256-color and truecolor support.
 - **Scrollback**: `terminal.scrollback` lines (default 1000).
-- **Font**: `terminal.font_family` (a CSS font-family list; by default Menlo on macOS, Cascadia Mono, then Consolas, on Windows, and on Linux Adwaita Mono, then Source Code Pro, Hack or DejaVu Sans Mono, whichever is installed first) at `terminal.font_size` (default 12), 1.2 line height. Changes in Settings apply to open terminals at once.
+- **Font**: `terminal.font_family` (a CSS font-family list; by default Menlo on macOS, Cascadia Mono, then Consolas, on Windows, and on Linux Adwaita Mono, then Source Code Pro, Hack or DejaVu Sans Mono, whichever is installed first) at `terminal.font_size` pixels (default 12, 13 on Linux), 1.2 line height. Changes in Settings apply to open terminals at once.
 - **Cursor**: Blinking bar, 2px wide.
 - **Working directory**: New terminals inherit the current directory of the active pane. On Windows the native path is de-verbatimised for the spawn (`\\?\C:\…` → `C:\…`) so cmd.exe actually cd's there; a genuine network location stays UNC (`\\server\share\…`) so the shell shows its own "UNC not supported" notice rather than us hiding it.
 - **Shell**: Unix — system default shell (passwd database or `$SHELL`). Windows — `%COMSPEC%` (cmd.exe). On macOS the shell is spawned as a **login shell** (`-l`, for `bash`/`zsh`/`fish`/`sh`; shells with no login flag are left alone): launchd gives a GUI process a bare `PATH`, and everything `path_helper` contributes (`/etc/paths.d`, the cryptex dirs, `/Library/Apple/usr/bin`) only arrives via `/etc/profile`, which non-login shells never read. Terminal.app, iTerm2, Ghostty and VS Code all do the same on macOS — and, like VS Code, Newt deliberately does *not* pass `-l` elsewhere: a Linux desktop session gets its environment from PAM/systemd, and an agent gets one from its login-shell bootstrap.
@@ -1961,7 +1961,7 @@ extra_path = ["/opt/homebrew/bin", "/usr/local/bin"]  # Searched after PATH for 
 
 [terminal]
 font_family = 'Menlo, Monaco, "Courier New", monospace'  # CSS font-family list; the first installed font is used. Defaults: this on macOS; '"Cascadia Mono", Consolas, "Courier New", monospace' on Windows; '"Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace' on Linux
-font_size = 12              # Points (6–72)
+font_size = 12              # Pixels (6–72); default 13 on Linux
 scrollback = 1000           # Lines kept above the screen (0–1,000,000)
 
 [editor]

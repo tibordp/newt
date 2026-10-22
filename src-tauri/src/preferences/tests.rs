@@ -1061,7 +1061,10 @@ fn numbers_outside_their_range_keep_their_defaults() {
          [archives]\nzstd_level = 0\n\n\
          [quick_open]\nlimit = 0\n",
     );
-    assert_eq!(loaded.settings.terminal.font_size, 12);
+    assert_eq!(
+        loaded.settings.terminal.font_size,
+        AppPreferences::default().terminal.font_size
+    );
     assert_eq!(loaded.settings.terminal.scrollback, 5000);
     assert_eq!(
         loaded.settings.archives.zstd_level,
