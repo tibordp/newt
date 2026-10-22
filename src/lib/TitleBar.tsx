@@ -103,6 +103,11 @@ function HeaderBar({ buttons }: { buttons: WindowButtons }) {
   const title = useWindowTitle();
   const run = useCommandRunner();
   const maximized = useMaximized();
+  // Square corners, with GTK's frame (see `_platform.scss`); GTK's own
+  // report covers tiling, this a window that opens maximized.
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-maximized", maximized);
+  }, [maximized]);
 
   return (
     <div className={styles.headerBar} data-tauri-drag-region>

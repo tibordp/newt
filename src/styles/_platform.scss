@@ -377,6 +377,28 @@
     --color-chrome-light: #fafafb;
   }
 
+  // The window's corners. GTK rounds its frame but not the window's
+  // contents, so the window is see-through and the page rounds itself to
+  // match (`appearance.rs`), square while GTK squares the frame — maximized,
+  // tiled, full screen.
+  --window-radius: 12px;
+  clip-path: inset(0 round var(--window-radius));
+
+  &[data-square-corners],
+  &[data-maximized] {
+    --window-radius: 0px;
+  }
+
+  body {
+    background: transparent;
+  }
+
+  #root {
+    position: fixed;
+    inset: 0;
+    background: var(--color-window-bg);
+  }
+
   @include dark {
     --color-fg: #ffffff;
     --color-fg-muted: #9a9a9f;

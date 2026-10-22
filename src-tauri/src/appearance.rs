@@ -100,10 +100,12 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     } else {
         builder
     };
-    // GTK takes a window's title bar only before it is first shown.
+    // GTK takes a window's title bar only before it is first shown. The
+    // window is see-through so the page can round its own corners: GTK
+    // rounds its frame but doesn't clip what's inside it.
     #[cfg(target_os = "linux")]
     let builder = if platform::is_gnome() {
-        builder.visible(false)
+        builder.visible(false).transparent(true)
     } else {
         builder
     };
@@ -119,15 +121,8 @@ pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
     if platform::is_gnome() {
         let target = window.clone();
         let result = window.run_on_main_thread(move || {
-            use gtk::prelude::{GtkWindowExt, WidgetExt};
             match target.gtk_window() {
-                Ok(gtk_window) => {
-                    // An empty title bar: GTK draws its frame around the
-                    // webview and no title bar of its own.
-                    let titlebar = gtk::EventBox::new();
-                    titlebar.set_size_request(-1, 0);
-                    gtk_window.set_titlebar(Some(&titlebar));
-                }
+                Ok(gtk_window) => platform::frame_only(&gtk_window, &target),
                 Err(e) => log::warn!("no GTK window for the header bar: {e}"),
             }
             if visible {
@@ -234,6 +229,79 @@ mod platform {
     use gio::prelude::SettingsExt;
 
     use super::{PlatformStyle, SystemAppearance, kde};
+
+    /// GTK's frame for a window whose page draws the rest. GTK3 rounds a
+    /// frame's corners but doesn't clip the window's contents to them, so
+    /// the window is see-through and the page rounds its own corners to
+    /// match (`_platform.scss`), squaring them, as GTK squares its frame,
+    /// while the window is maximized, tiled or full screen.
+    pub(super) fn frame_only(gtk_window: &gtk::ApplicationWindow, webview: &tauri::WebviewWindow) {
+        use gtk::gdk::WindowState;
+        use gtk::glib::Propagation;
+        use gtk::prelude::{CssProviderExt, GtkWindowExt, StyleContextExt, WidgetExt};
+
+        thread_local!(static STYLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if !STYLED.replace(true)
+            && let Some(screen) = gtk::prelude::WidgetExt::screen(gtk_window)
+        {
+            let provider = gtk::CssProvider::new();
+            provider
+                .load_from_data(FRAME_CSS.as_bytes())
+                .expect("frame stylesheet parses");
+            gtk::StyleContext::add_provider_for_screen(
+                &screen,
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+        gtk_window.style_context().add_class("newt-frame");
+
+        // GTK marks the widget it is given as the title bar `.titlebar`,
+        // which the theme draws a border under; the stylesheet takes it
+        // away again.
+        let titlebar = gtk::EventBox::new();
+        gtk_window.set_titlebar(Some(&titlebar));
+
+        let webview = webview.clone();
+        gtk_window.connect_window_state_event(move |_, event| {
+            let square = event.new_window_state().intersects(
+                WindowState::MAXIMIZED
+                    | WindowState::FULLSCREEN
+                    | WindowState::TILED
+                    | WindowState::TOP_TILED
+                    | WindowState::RIGHT_TILED
+                    | WindowState::BOTTOM_TILED
+                    | WindowState::LEFT_TILED,
+            );
+            let _ = webview.eval(format!(
+                "document.documentElement.toggleAttribute('data-square-corners', {square})"
+            ));
+            Propagation::Proceed
+        });
+    }
+
+    /// The window's corner radius matches libadwaita's (`--window-radius`).
+    const FRAME_CSS: &str = "
+        window.newt-frame { background: transparent; }
+        window.newt-frame, window.newt-frame decoration { border-radius: 12px; }
+        window.newt-frame.maximized, window.newt-frame.maximized decoration,
+        window.newt-frame.fullscreen, window.newt-frame.fullscreen decoration,
+        window.newt-frame.tiled, window.newt-frame.tiled decoration,
+        window.newt-frame.tiled-top, window.newt-frame.tiled-top decoration,
+        window.newt-frame.tiled-right, window.newt-frame.tiled-right decoration,
+        window.newt-frame.tiled-bottom, window.newt-frame.tiled-bottom decoration,
+        window.newt-frame.tiled-left, window.newt-frame.tiled-left decoration {
+            border-radius: 0;
+        }
+        window.newt-frame .titlebar {
+            min-height: 0;
+            padding: 0;
+            margin: 0;
+            border: none;
+            box-shadow: none;
+            background: none;
+        }
+    ";
 
     /// KDE by `XDG_CURRENT_DESKTOP`; every other desktop gets the GNOME look.
     pub(super) fn is_gnome() -> bool {
