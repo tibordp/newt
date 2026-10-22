@@ -114,6 +114,8 @@
   // Focus
   --focus-ring: 2px solid var(--color-accent);
   --focus-ring-offset: 1px;
+  // On a filled (suggested or destructive) button.
+  --focus-ring-on-fill: var(--focus-ring);
 
   // Borders
   --color-border: var(--_border);

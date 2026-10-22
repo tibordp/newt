@@ -30,6 +30,7 @@ input[type="submit"] {
   // overridable by buttons restyled elsewhere.
   padding: calc((var(--control-height) - 1lh) / 2 - 1px)
     var(--control-padding-x);
+  white-space: nowrap;
   cursor: default;
 
   &:hover {
@@ -50,6 +51,12 @@ input[type="submit"] {
 
   &:disabled {
     opacity: 0.5;
+  }
+
+  // A ring in the accent would vanish against an accent fill.
+  &.suggested,
+  &.destructive {
+    --focus-ring: var(--focus-ring-on-fill);
   }
 
   &.suggested {

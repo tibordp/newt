@@ -349,6 +349,7 @@
   --focus-ring: 2px solid
     color-mix(in srgb, var(--color-accent) 50%, transparent);
   --focus-ring-offset: -2px;
+  --focus-ring-on-fill: 2px solid rgba(255, 255, 255, 0.5);
 
   --radius-dialog: 15px;
   --color-dialog-border: transparent;

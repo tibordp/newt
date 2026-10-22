@@ -3,8 +3,11 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--color-bg);
+  // Behind the header, as behind a pane's: the viewer paints its content.
+  background: var(--color-window-bg);
   outline: none;
+  // The viewer sits in a pane here, not under the window's title bar.
+  --titlebar-height: 0px;
 }
 
 .content {
@@ -31,6 +34,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
+  background: var(--color-bg);
   color: var(--color-fg-muted);
   font-style: italic;
   user-select: none;
