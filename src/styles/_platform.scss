@@ -146,6 +146,11 @@
     var(--font-system, "Segoe UI Variable Text"), "Segoe UI Variable Text",
     "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", Consolas, monospace;
+  // 9pt is the base already, and Windows draws no UI text smaller: Segoe
+  // goes thin and smudgy below it.
+  --font-size-sm: var(--font-size-base);
+  --font-size-xs: calc(var(--font-size-base) - 1px);
+  --font-size-command-bar: var(--font-size-base);
 
   --color-fg: #1b1b1b;
   --color-fg-muted: #616161;

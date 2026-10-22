@@ -218,6 +218,8 @@
   --font-size-sm: calc(var(--font-size-base) - 1px);
   --font-size-md: var(--font-size-base);
   --font-size-lg: calc(var(--font-size-base) + 2px);
+  // The function key bar.
+  --font-size-command-bar: calc(var(--font-size-base) * 0.85);
 
   // Monospace (logs, transcripts; the terminal configures xterm directly)
   --font-mono: Menlo, Monaco, "Courier New", monospace;

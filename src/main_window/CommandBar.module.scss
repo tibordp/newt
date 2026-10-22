@@ -20,7 +20,7 @@
   padding: 0 4px;
   cursor: pointer;
   font: inherit;
-  font-size: 0.85em;
+  font-size: var(--font-size-command-bar);
   color: var(--color-fg);
   white-space: nowrap;
   overflow: hidden;
