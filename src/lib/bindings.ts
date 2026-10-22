@@ -125,6 +125,40 @@ async zoom(factor: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getSystemAppearance() : Promise<SystemAppearance> {
+    return await TAURI_INVOKE("get_system_appearance");
+},
+/**
+ * The window manager's window menu, for a right click on the header bar
+ * Newt draws (GNOME).
+ */
+async showWindowMenu() : Promise<void> {
+    await TAURI_INVOKE("show_window_menu");
+},
+/**
+ * Whether the window is the active one, for a page that has only just
+ * loaded and so missed being told.
+ */
+async isWindowActive() : Promise<boolean> {
+    return await TAURI_INVOKE("is_window_active");
+},
+/**
+ * Whether GTK has squared the frame's corners (maximized, tiled, full
+ * screen) under the header bar Newt draws, for a page that has only just
+ * loaded; changes after that are pushed as they happen.
+ */
+async hasSquareCorners() : Promise<boolean> {
+    return await TAURI_INVOKE("has_square_corners");
+},
+/**
+ * The window's menu, for its header bar; `None` if it has none.
+ */
+async getWindowMenu() : Promise<MenuEntry[] | null> {
+    return await TAURI_INVOKE("get_window_menu");
+},
+async activateWindowMenuItem(id: string) : Promise<void> {
+    await TAURI_INVOKE("activate_window_menu_item", { id });
+},
 async cancel(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel", { paneHandle }) };
@@ -2561,6 +2595,18 @@ export type BrowseFormat = "zip" | "7z" |
  */
 "disc"
 /**
+ * KDE's colour scheme, each colour `#rrggbb` where the scheme sets it.
+ */
+export type ColorScheme = { 
+/**
+ * Whether the scheme is a dark one, judged by its window colour.
+ */
+dark: boolean; window_bg: string | null; window_fg: string | null; window_fg_inactive: string | null; view_bg: string | null; view_fg: string | null; header_bg: string | null; 
+/**
+ * While the window doesn't have the keyboard.
+ */
+header_bg_inactive: string | null; header_fg: string | null; button_bg: string | null; button_fg: string | null; selection_fg: string | null; focus: string | null }
+/**
  * Command metadata for the command palette.
  */
 export type CommandInfo = { id: string; name: string; short_name: string | null; category: string; 
@@ -3377,6 +3423,10 @@ export type LayoutState = {
  */
 terminal_height: number | null }
 /**
+ * A colour as the light and the dark appearance resolve it, `#rrggbb`.
+ */
+export type LightDark = { light: string; dark: string }
+/**
  * How far the connection log has grown. The lines themselves stay out of
  * published state; the frontend fetches them with `connection_log`.
  */
@@ -3399,6 +3449,7 @@ export type MainWindowState = { connection_status: ConnectionStatusWire; askpass
  * A node of a rendered document.
  */
 export type MarkdownNode = string | { tag: string; attrs: ([string, string])[]; children: MarkdownNode[] }
+export type MenuEntry = { kind: "item"; id: string; label: string; enabled: boolean; checked: boolean | null } | { kind: "submenu"; label: string; enabled: boolean; items: MenuEntry[] } | { kind: "separator" }
 /**
  * Which optional per-entry metadata families a VFS actually populates
  * on its `File`s — drives which file-list columns a pane offers (see
@@ -4094,6 +4145,7 @@ context_badges: ContextBadge[];
  * enricher id.
  */
 enrichment_activity: Partial<{ [key in string]: string }> }
+export type PlatformStyle = "macos" | "windows" | "gnome" | "kde"
 export type PropertyField = { 
 /**
  * Stable key (e.g. `s3.meta`) — patch target and i18n/docs anchor.
@@ -4485,6 +4537,29 @@ export type Symlink =
  * empty target — what needs the target fails on the entry instead.
  */
 "unknown"
+export type SystemAppearance = { platform: PlatformStyle; 
+/**
+ * `#rrggbb`.
+ */
+accent: string | null; font_family: string | null; 
+/**
+ * The UI font's size, in points.
+ */
+font_points: number | null; 
+/**
+ * The window buttons of the header bar Newt draws itself (GNOME);
+ * `None` where the desktop gives the window its title bar.
+ */
+window_buttons: WindowButtons | null; color_scheme: ColorScheme | null; 
+/**
+ * Mica shows through the window's chrome.
+ */
+mica: boolean; 
+/**
+ * The window's background, which a plain title bar is drawn in
+ * (macOS); the pane headers take it so the title bar runs on into them.
+ */
+window_bg: LightDark | null }
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 
@@ -4511,7 +4586,7 @@ export type TerminalPreferences = {
  */
 font_family: string; 
 /**
- * Font size of the built-in terminals, in points.
+ * Font size of the built-in terminals, in pixels.
  */
 font_size: number; 
 /**
@@ -4737,6 +4812,11 @@ export type VolumeKind =
  * A phone or a camera, over MTP or PTP.
  */
 "Device" | "Unknown"
+export type WindowButton = "minimize" | "maximize" | "close"
+/**
+ * The window buttons on either side of a header bar, in order.
+ */
+export type WindowButtons = { start: WindowButton[]; end: WindowButton[] }
 /**
  * One installed WSL distribution. Serialized into the picker modal payload.
  */

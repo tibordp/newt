@@ -49,7 +49,7 @@ import {
   getVisibleColumns,
   moveColumn,
 } from "./columns";
-import { rowHeightFor } from "./density";
+import { useRowHeight } from "./density";
 import { usePreferences } from "../lib/preferences";
 import { useCommandShortcuts } from "../lib/scopedBindings";
 import { IconMaximize, IconPaneSide, IconRestore } from "./modals/primitives";
@@ -515,17 +515,12 @@ function VfsSelectorLabel({
   compact: boolean;
 }) {
   const icon = compact ? VFS_ICONS[typeName] : undefined;
-  return (
-    <>
-      {icon ? (
-        <span className={styles.vfsSelectorIcon} aria-hidden>
-          {icon}
-        </span>
-      ) : (
-        name
-      )}{" "}
-      <span aria-hidden>&#x25BE;</span>
-    </>
+  return icon ? (
+    <span className={styles.vfsSelectorIcon} aria-hidden>
+      {icon}
+    </span>
+  ) : (
+    name
   );
 }
 
@@ -1139,7 +1134,7 @@ function PaneInner(
     [preferences?.bindings],
   );
 
-  const rowHeight = rowHeightFor(preferences?.settings?.appearance?.density);
+  const rowHeight = useRowHeight(preferences?.settings?.appearance?.density);
 
   const columns = useMemo(
     () =>

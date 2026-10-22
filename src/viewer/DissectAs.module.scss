@@ -34,12 +34,12 @@
     }
 
     &[data-selected="true"] {
-      background: var(--color-accent);
-      color: var(--color-accent-fg);
+      background: var(--color-highlight-bg);
+      color: var(--color-highlight-fg);
 
       .meta,
       .check {
-        color: var(--color-accent-fg);
+        color: inherit;
       }
       @include fc.selected;
     }

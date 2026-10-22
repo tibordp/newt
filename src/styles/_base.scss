@@ -1,3 +1,5 @@
+@use "focus-ring";
+
 @font-face {
   font-family: "seti";
   font-weight: normal;
@@ -23,12 +25,24 @@ input[type="submit"] {
   // drop along with the border; a box-shadow here would leak into them.
   border: 1px solid var(--color-control-border);
   border-bottom-color: var(--color-control-border-bottom);
-  border-radius: var(--radius-md);
-  padding: 5px var(--space-5);
+  border-radius: var(--radius-control);
+  // The text's line box plus this makes the control height, and stays
+  // overridable by buttons restyled elsewhere.
+  padding: calc((var(--control-height) - 1lh) / 2 - 1px)
+    var(--control-padding-x);
+  white-space: nowrap;
   cursor: default;
 
   &:hover {
     background: var(--color-control-hover-bg);
+    border-color: var(
+      --color-control-hover-border,
+      var(--color-control-border)
+    );
+    border-bottom-color: var(
+      --color-control-hover-border,
+      var(--color-control-border-bottom)
+    );
   }
 
   &:active {
@@ -39,17 +53,23 @@ input[type="submit"] {
     opacity: 0.5;
   }
 
+  // A ring in the accent would vanish against an accent fill.
+  &.suggested,
+  &.destructive {
+    --focus-ring: var(--focus-ring-on-fill);
+  }
+
   &.suggested {
-    background: var(--color-accent);
-    color: var(--color-accent-fg);
-    border-color: transparent;
+    background: var(--color-suggested-bg);
+    color: var(--color-suggested-fg);
+    border-color: var(--color-suggested-border);
 
     &:hover {
-      background: var(--color-accent-hover);
+      background: var(--color-suggested-hover-bg);
     }
 
     &:active {
-      background: var(--color-accent-active);
+      background: var(--color-suggested-active-bg);
     }
   }
 
@@ -84,15 +104,13 @@ textarea {
   color: var(--color-fg);
   background: var(--color-input-bg);
   border: 1px solid var(--color-input-border);
-  border-radius: var(--radius-md);
-  padding: 5px var(--space-4);
+  border-bottom-color: var(--color-input-border-bottom);
+  border-radius: var(--radius-control);
+  padding: calc((var(--control-height) - 1lh) / 2 - 1px) var(--space-4);
   width: 100%;
   box-sizing: border-box;
 
-  &:focus {
-    outline: var(--focus-ring);
-    outline-offset: -1px;
-  }
+  @include focus-ring.field;
 }
 
 select {

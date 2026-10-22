@@ -11,6 +11,8 @@ import "./styles/globals.scss";
 import { safe } from "./lib/ipc";
 import { commands } from "./lib/bindings";
 import { useRuntimeState } from "./lib/runtimeState";
+import { initAppearance } from "./lib/appearance";
+import { TitleBar } from "./lib/TitleBar";
 
 const router = createBrowserRouter([
   {
@@ -80,8 +82,15 @@ function App({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onkeydown);
   }, []);
 
-  return <>{children}</>;
+  return (
+    <>
+      <TitleBar />
+      {children}
+    </>
+  );
 }
+
+initAppearance();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   // <React.StrictMode>

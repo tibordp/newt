@@ -2489,10 +2489,10 @@ pub fn spawn_main_window(
         None
     };
 
-    let mut builder = crate::confine_webview(
+    let mut builder = crate::appearance::window_chrome(crate::confine_webview(
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into())),
         app_handle,
-    )
+    ))
     .title(&launch.title)
     .resizable(true)
     .min_inner_size(crate::MIN_WINDOW_SIZE.0, crate::MIN_WINDOW_SIZE.1)
@@ -2512,6 +2512,7 @@ pub fn spawn_main_window(
     };
     let window = builder.build()?;
     crate::tune_webview_settings(&window);
+    crate::appearance::window_built(&window, true);
 
     let ctx = MainWindowContext::new(window.clone(), launch, prefs_handle.clone());
     // A window opened maximized reports no normal bounds until un-maximized.

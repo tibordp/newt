@@ -1,11 +1,28 @@
-/// Outer document for a scene: macOS window chrome around the app frame.
-/// Without `?scene=`, an index of every scene.
+/// Outer document for a scene: window chrome around the app frame, for
+/// `?platform=` (macOS by default). Without `?scene=`, an index of every
+/// scene.
 
 import "./frame.css";
 import { scenes } from "./registry";
 
-const name = new URLSearchParams(location.search).get("scene");
+const params = new URLSearchParams(location.search);
+const name = params.get("scene");
 const scene = name ? scenes[name] : undefined;
+const platform = params.get("platform") ?? "macos";
+
+/// How many window controls each title bar has, trailing; `frame.css`
+/// draws them. macOS draws its lights leading, over the app's own strip.
+const CONTROLS: Record<string, number> = {
+  macos: 0,
+  windows: 3,
+  kde: 3,
+};
+
+/// Title bars the app draws itself, which its frame takes in: GNOME's
+/// header bar (none of the frame's own).
+const DRAWN_TITLEBAR: Record<string, number> = {
+  gnome: 46,
+};
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -20,21 +37,28 @@ function el<K extends keyof HTMLElementTagNameMap>(
 if (scene) {
   const title = el("span", { className: "title" });
   const iframe = el("iframe", {
-    src: `/docs/scenes/scene.html?scene=${encodeURIComponent(name!)}`,
+    src:
+      `/docs/scenes/scene.html?scene=${encodeURIComponent(name!)}` +
+      `&platform=${encodeURIComponent(platform)}`,
   });
+  const overlay = DRAWN_TITLEBAR[platform] ?? 0;
   iframe.style.width = `${scene.size.width}px`;
-  iframe.style.height = `${scene.size.height}px`;
+  iframe.style.height = `${scene.size.height + overlay}px`;
   window.addEventListener("message", (e) => {
     if (e.source === iframe.contentWindow && "sceneTitle" in e.data) {
       title.textContent = e.data.sceneTitle;
     }
   });
+  const controls = Array.from({ length: CONTROLS[platform] ?? 0 }, () =>
+    el("i"),
+  );
   document.body.append(
     el("div", { className: "backdrop" }, [
-      el("div", { className: "window" }, [
+      el("div", { className: `window ${platform}` }, [
         el("div", { className: "titlebar" }, [
           el("span", { className: "lights" }, [el("i"), el("i"), el("i")]),
           title,
+          el("span", { className: "controls" }, controls),
         ]),
         iframe,
       ]),

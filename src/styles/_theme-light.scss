@@ -14,11 +14,9 @@
   --_gray-900: #1e1e1e;
   --_gray-950: #000000;
 
-  // Blues
-  --_blue-400: #d5e4f7;
   --_blue-500: #3584e4;
-  --_blue-600: #2a76d6;
-  --_blue-700: #1f68c8;
+  // What hover and press mix into a fill: darker in light themes.
+  --_shade: black;
 
   // Status
   --_green-500: #00bc00;

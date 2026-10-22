@@ -39,10 +39,10 @@ fn build_child_window(
         .to_tauri_theme()
         .or_else(crate::detect_theme);
 
-    let mut builder = crate::confine_webview(
+    let mut builder = crate::appearance::window_chrome(crate::confine_webview(
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App(url.into())),
         app_handle,
-    )
+    ))
     .title(title)
     .inner_size(size.0, size.1)
     .min_inner_size(crate::MIN_WINDOW_SIZE.0, crate::MIN_WINDOW_SIZE.1)
@@ -64,6 +64,7 @@ fn build_child_window(
     // started loading at this point, so no IPC has fired yet.
     let window = builder.build()?;
     crate::tune_webview_settings(&window);
+    crate::appearance::window_built(&window, visible);
 
     // Live title-bar updates on theme-preference changes. (Webview
     // content already follows globally via the shared WebView2 profile /

@@ -1,9 +1,6 @@
 :root {
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
 
   color: var(--color-fg);
 
@@ -33,7 +30,7 @@
 
   &:focus-visible {
     outline: var(--focus-ring);
-    outline-offset: 1px;
+    outline-offset: var(--focus-ring-offset);
   }
 }
 
@@ -45,7 +42,7 @@ body {
 body {
   margin: 0;
   padding: 0;
-  background: var(--color-bg);
+  background: var(--color-window-bg);
 
   user-select: none;
   -webkit-user-select: none;
@@ -58,7 +55,7 @@ body {
   margin: 0;
   padding: 0;
   position: absolute;
-  top: 0;
+  top: var(--titlebar-height);
   left: 0;
   right: 0;
   bottom: 0;

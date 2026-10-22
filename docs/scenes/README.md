@@ -7,11 +7,15 @@ they can be regenerated whenever the UI changes:
 npx playwright install webkit   # once
 npm run screenshots             # every scene, light and dark
 npm run screenshots -- terminal editor --scheme dark
+npm run screenshots -- settings --platform gnome
 ```
 
 PNGs land in `docs/screenshots/` (`<scene>.png`, `<scene>-dark.png`; `--out`
-to change) at 2×, in macOS window chrome with its shadow on a transparent
-background. That folder isn't committed. The one shot that is, the README's
+to change) at 2×, in window chrome with its shadow on a transparent
+background. `--platform` (`macos`, the default, `windows`, `gnome` or `kde`)
+picks the platform look and its chrome, and adds the platform to the file
+names; only the fonts installed on the machine are used, so off macOS's own
+the text is in a stand-in. That folder isn't committed. The one shot that is, the README's
 `docs/screenshot.png`, is the light `pack-to-s3`, copied there whenever a run
 into the default folder renders it. Run it on a Mac: default preferences, and
 with them the rendered shortcuts, are exported from Rust for the host platform.
@@ -52,7 +56,8 @@ Nothing of the Rust side runs. `harness.ts` stands in for the backend with
 Tauri's `mockIPC`: it answers `ping` with the scene state,
 `get_preferences` / `get_runtime_state` with the defaults exported by
 `newt --export-scene-defaults` (a `specta-bindings` build; locale pinned to
-en-US), and file reads from the fixtures, then boots the real app on the
+en-US), `get_system_appearance` with the platform's defaults, and file reads
+from the fixtures, then boots the real app on the
 window's route inside `scene.html`. `frame.html` draws the window chrome
 around that iframe.
 

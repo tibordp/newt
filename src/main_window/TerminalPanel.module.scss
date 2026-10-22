@@ -39,10 +39,11 @@
   gap: var(--space-4);
   // Less on the right, where the close button brings its own margin.
   padding: 0 var(--space-2) 0 var(--space-5);
+  margin: var(--tab-margin);
   background: none;
   border: none;
-  border-right: 1px solid var(--color-separator);
-  border-radius: 0;
+  border-right: 1px solid var(--color-tab-separator);
+  border-radius: var(--radius-tab);
   color: var(--color-fg-muted);
   cursor: pointer;
   font: inherit;
@@ -55,18 +56,18 @@
   }
 
   &.active {
-    background: var(--color-bg);
+    background: var(--color-tab-active-bg);
     color: var(--color-fg);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-tab-mark-idle);
     @include fc.selected;
   }
 
-  // An accent line along the top while the terminal has focus.
   .tabBarFocused &.active {
-    box-shadow: inset 0 2px 0 var(--color-accent);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-accent);
   }
 
   :global(:root[data-window-inactive]) .tabBarFocused &.active {
-    box-shadow: inset 0 2px 0 var(--color-fg-muted);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-fg-muted);
   }
 
   &.defunct {
@@ -159,6 +160,7 @@
   flex: 1;
   position: relative;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
 .terminalWrapper {

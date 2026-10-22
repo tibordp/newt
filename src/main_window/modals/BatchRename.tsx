@@ -17,7 +17,7 @@ import {
 import { FileIcon } from "../../lib/fileIcons";
 import { safe, tryRun } from "../../lib/ipc";
 import { usePreferences } from "../../lib/preferences";
-import { rowHeightFor } from "../density";
+import { useRowHeight } from "../density";
 import type { ModalDataOf } from "./ModalContent";
 import {
   DialogShell,
@@ -274,7 +274,7 @@ function Status({ preview }: { preview: BatchRenamePreview }) {
 /// The rows, virtualized: the host sends the ones in view.
 function RowList({ preview }: { preview: BatchRenamePreview }) {
   const preferences = usePreferences();
-  const rowHeight = rowHeightFor(preferences?.settings?.appearance?.density);
+  const rowHeight = useRowHeight(preferences?.settings?.appearance?.density);
   const listRef = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const viewport = useRef<[number, number]>([-1, -1]);

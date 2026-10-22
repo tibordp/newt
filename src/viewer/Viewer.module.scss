@@ -2,7 +2,7 @@
 
 .viewer {
   position: absolute;
-  top: 0;
+  top: var(--titlebar-height);
   left: 0;
   right: 0;
   bottom: 0;
@@ -13,7 +13,7 @@
   margin: 0;
   padding: 0;
 
-  background: var(--color-bg);
+  background: var(--color-window-bg);
   color: var(--color-fg);
 
   cursor: initial;
@@ -23,6 +23,7 @@
 .viewerContent {
   flex: 1;
   overflow: auto;
+  background: var(--color-bg);
 
   pre {
     margin: 0;
@@ -480,10 +481,13 @@
   border: 1px solid transparent;
   color: var(--color-fg-muted);
   cursor: pointer;
+  // As tall as the status bar's text, the border reaching into its
+  // padding, so a bar with toggles is no taller than one without.
   padding: 0 6px;
-  font-size: 12px;
+  margin-block: -1px;
+  font-size: inherit;
+  line-height: inherit;
   border-radius: 3px;
-  line-height: 1.4;
 
   &:hover {
     color: var(--color-fg);

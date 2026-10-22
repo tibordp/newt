@@ -88,6 +88,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+windows-version = "0.1"
 # Versions pinned to match wry's WebView2 bindings so the controller handed
 # to `WebviewWindow::with_webview` casts to our interface cleanly.
 webview2-com = "0.39"
@@ -98,6 +99,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
+    "UI_ViewManagement",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -121,8 +123,12 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
+    "NSAppearance",
+    "objc2-core-foundation",
     "objc2-uniform-type-identifiers",
     "NSButton",
+    "NSColor",
+    "NSColorSpace",
     "NSControl",
     "NSOpenPanel",
     "NSPanel",

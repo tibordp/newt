@@ -15,9 +15,9 @@
     <title>Newt</title>
     <style>
       @media (prefers-color-scheme: dark) {
-        html:not([data-theme="light"]) body { background: #1e1e1e; }
+        :where(html:not([data-theme="light"])) body { background: #1e1e1e; }
       }
-      [data-theme="dark"] body { background: #1e1e1e; }
+      :where([data-theme="dark"]) body { background: #1e1e1e; }
     </style>
   </head>
 

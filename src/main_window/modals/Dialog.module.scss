@@ -16,7 +16,7 @@
 .dialogContentTopRight {
   @include dlg.dialog-surface;
   position: fixed;
-  top: var(--space-6);
+  top: calc(var(--titlebar-height) + var(--space-6));
   right: var(--space-6);
   width: fit-content;
   max-width: 60%;

@@ -288,9 +288,7 @@ impl ViewerWindow {
             let _ = app_handle.set_menu(menu.clone());
         }
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = window.set_menu(menu.clone());
-        }
+        crate::window_menu::set_menu(window, menu.clone());
         *self.menu.write() = Some(menu);
     }
 }
@@ -359,9 +357,7 @@ pub fn activate_viewer_window(
         let _ = app_handle.set_menu(menu.clone());
     }
     #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window.set_menu(menu.clone());
-    }
+    crate::window_menu::set_menu(window, menu.clone());
 
     *viewer.menu.write() = Some(menu);
     *viewer.window.write() = Some(window.clone());
@@ -371,9 +367,9 @@ pub fn activate_viewer_window(
     // so each handler only reacts to its own window's menu items.
     let viewer_weak = Arc::downgrade(viewer);
     let window_clone = window.clone();
-    app_handle.on_menu_event(move |_app_handle, event| {
-        let id = event.id().0.as_str();
-
+    #[cfg(target_os = "macos")]
+    let app = app_handle.clone();
+    let handler: crate::window_menu::Handler = Arc::new(move |id: &str| {
         if id == close_id {
             let _ = window_clone.destroy();
             return;
@@ -387,8 +383,8 @@ pub fn activate_viewer_window(
 
         #[cfg(target_os = "macos")]
         if suffix == "quit" {
-            let global_ctx: State<GlobalContext> = _app_handle.state();
-            global_ctx.quit(_app_handle);
+            let global_ctx: State<GlobalContext> = app.state();
+            global_ctx.quit(&app);
             return;
         }
 
@@ -419,6 +415,11 @@ pub fn activate_viewer_window(
         };
         viewer.set_mode(mode);
     });
+    app_handle.on_menu_event({
+        let handler = handler.clone();
+        move |_, event| handler(event.id().0.as_str())
+    });
+    crate::window_menu::set_handler(window, handler);
 
     Ok(())
 }

@@ -100,7 +100,7 @@
   display: flex;
   cursor: default;
   width: fit-content;
-  padding: 0 20px 0 3px;
+  padding: 0 20px 0 var(--row-padding-start);
   font-size: var(--font-size-sm);
 }
 
@@ -110,6 +110,7 @@
   flex: 1 1 0;
   min-height: 0;
   position: relative;
+  background: var(--color-bg);
 }
 
 .menuKeyTarget {
@@ -158,15 +159,14 @@
   display: flex;
   width: fit-content;
   height: var(--row-height);
-  padding: 0 20px 0 3px;
+  padding: 0 20px 0 var(--row-padding-start);
 
-  // Row highlights are inset from the pane's edges.
   &::before {
     content: "";
     position: absolute;
-    inset: 0 var(--space-1);
+    inset: 0 var(--row-inset);
     z-index: -1;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-row);
   }
 
   &.selected {
@@ -179,7 +179,7 @@
     // otherwise override the selection color. Three classes of
     // specificity vs. their two.
     :global(.filename-part) {
-      color: var(--color-accent);
+      color: var(--color-selected-fg);
     }
     @include fc.selected;
   }
@@ -214,16 +214,16 @@
   }
 
   :global(:root:not([data-window-inactive])) &.focused {
-    color: var(--color-accent-fg);
+    color: var(--color-cursor-fg);
 
     &::before {
-      background: var(--color-accent);
+      background: var(--color-cursor-bg);
     }
 
-    // Type colors would vanish into the accent fill.
+    // Type colors would vanish into the fill.
     :global(.filename-part),
     :global(.file-icon) {
-      color: var(--color-accent-fg);
+      color: var(--color-cursor-fg);
     }
   }
 
@@ -271,6 +271,7 @@
     &:focus {
       outline: none;
       border: none;
+      box-shadow: none;
     }
   }
 }
@@ -380,7 +381,7 @@
 .vfsSelector {
   background: none;
   border: 1px solid transparent;
-  color: var(--color-fg-muted);
+  color: var(--color-chrome-fg);
   padding: 0 var(--space-2);
   cursor: pointer;
   border-radius: var(--radius-sm);

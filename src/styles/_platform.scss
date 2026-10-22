@@ -1,0 +1,621 @@
+// The platform layer: each system's design language as token values over
+// the shared design. `data-platform` (set from `appearance.ts`) picks the
+// block; components read tokens and never the platform. Where the system
+// supplies a value — its accent (`--system-accent`), its UI font
+// (`--font-system`, `--font-size-base`) — that wins over the defaults here.
+
+// A block's dark-theme values, following the theme cascade in
+// `_theme-dark.scss`.
+@mixin dark {
+  @media (prefers-color-scheme: dark) {
+    &:not([data-theme="light"]) {
+      @content;
+    }
+  }
+
+  &[data-theme="dark"] {
+    @content;
+  }
+}
+
+// macOS 26: SF at 13pt, the accent as a fill for whatever has the
+// keyboard, capsule push buttons, an accent halo around a focused field,
+// translucent menus, and sheets with no footer chrome.
+:root[data-platform="macos"] {
+  --font-ui: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-fg: #262626;
+  --color-fg-muted: #7a7a7a;
+  --color-chrome-fg: #6e6e6e;
+  --color-bg: #ffffff;
+  --color-chrome: #ececec;
+  // The title bar's colour, which the pane headers run on from: the
+  // window background, from AppKit (macOS 26's below).
+  --color-chrome-light: var(--system-window-bg-light, #ffffff);
+  --color-surface: #f2f2f2;
+  --color-separator: rgba(0, 0, 0, 0.1);
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-border-strong: rgba(0, 0, 0, 0.16);
+
+  --color-accent: var(--system-accent, #007aff);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  // The unemphasized selection: the other pane's cursor, any cursor while
+  // the window is in the background.
+  --color-cursor-inactive: rgba(0, 0, 0, 0.1);
+
+  --color-destructive: #ff3b30;
+  --color-destructive-text: #e0352b;
+
+  --radius-row: 6px;
+  --row-inset: 4px;
+  --row-padding-start: 2px;
+
+  --control-height: 24px;
+  --control-padding-x: 14px;
+  --radius-control: 7px;
+  --radius-button: 999px;
+  --color-control-bg: #ffffff;
+  --color-control-hover-bg: #ffffff;
+  --color-control-active-bg: #e8e8e8;
+  --color-control-border: rgba(0, 0, 0, 0.12);
+  --color-control-border-bottom: rgba(0, 0, 0, 0.2);
+  --control-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.1);
+
+  --color-input-bg: #ffffff;
+  --color-input-border: rgba(0, 0, 0, 0.14);
+  --input-focus-outline: none;
+  --input-focus-shadow: 0 0 0 3.5px
+    color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --input-focus-border: color-mix(
+    in srgb,
+    var(--color-accent) 70%,
+    transparent
+  );
+  --focus-ring: 3.5px solid
+    color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --focus-ring-offset: 0px;
+
+  --radius-dialog: 18px;
+  --color-dialog-border: rgba(0, 0, 0, 0.1);
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: transparent;
+  --shadow-dialog:
+    0 18px 50px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --font-size-title: var(--font-size-base);
+  --font-weight-title: 700;
+
+  --color-menu-bg: rgba(246, 246, 246, 0.94);
+  --menu-backdrop: blur(24px) saturate(1.8);
+  --radius-menu: 12px;
+  --radius-menu-item: 7px;
+  --menu-item-height: 24px;
+  // Text and icons start 16px in from the menu's edge, the separators
+  // with them; the highlight is the accent let through by a fifth.
+  --menu-padding: 5px;
+  --menu-item-padding-x: 10px;
+  --color-menu-highlight-bg: color-mix(
+    in srgb,
+    var(--color-accent) 80%,
+    transparent
+  );
+  --menu-separator-gap: 5px;
+  --menu-separator-inset: var(--menu-item-padding-x);
+
+  @include dark {
+    --color-fg: #dddddd;
+    --color-fg-muted: #989898;
+    --color-chrome-fg: #a0a0a0;
+    --color-bg: #1e1e1e;
+    --color-chrome: #323232;
+    --color-chrome-light: var(--system-window-bg-dark, #1e1e1e);
+    --color-surface: #2c2c2c;
+    --color-separator: rgba(255, 255, 255, 0.1);
+    --color-border: rgba(255, 255, 255, 0.12);
+    --color-border-strong: rgba(255, 255, 255, 0.16);
+
+    --color-accent: var(--system-accent, #0a84ff);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 26%,
+      transparent
+    );
+    --color-cursor-inactive: rgba(255, 255, 255, 0.14);
+
+    --color-destructive: #ff453a;
+    --color-destructive-text: #ff6961;
+
+    --color-control-bg: #5b5b5b;
+    --color-control-hover-bg: #5b5b5b;
+    --color-control-active-bg: #6c6c6c;
+    --color-control-border: rgba(255, 255, 255, 0.06);
+    --color-control-border-bottom: rgba(0, 0, 0, 0.3);
+    --control-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.3);
+
+    --color-input-bg: #282828;
+    --color-input-border: rgba(255, 255, 255, 0.14);
+
+    --color-dialog-border: rgba(255, 255, 255, 0.14);
+    --shadow-dialog:
+      0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+
+    --color-menu-bg: rgba(42, 42, 42, 0.94);
+  }
+}
+
+// Windows 11: Segoe UI at 9pt and Fluent throughout — Mica behind the
+// chrome (the title bar's own, running on into the pane headers and bars),
+// elevation edges on controls, an accent underline under a focused field,
+// flat underlined tabs, thin rounded scroll bars, and dialogs whose
+// buttons share a footer band.
+:root[data-platform="windows"] {
+  --font-ui:
+    var(--font-system, "Segoe UI Variable Text"), "Segoe UI Variable Text",
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+  // 9pt is the base already, and Segoe goes thin and smudgy much below it:
+  // the small sizes stay at it or a pixel under. The function key bar is a
+  // step under the location bar, as elsewhere.
+  --font-size-sm: var(--font-size-base);
+  --font-size-xs: calc(var(--font-size-base) - 1px);
+  --font-size-command-bar: calc(var(--font-size-base) - 1px);
+
+  --color-fg: #1b1b1b;
+  --color-fg-muted: #616161;
+  --color-chrome-fg: #5c5c5c;
+  --color-bg: #ffffff;
+  --color-chrome: #ebebeb;
+  --color-chrome-light: #f3f3f3;
+  --color-surface: #ffffff;
+  --color-separator: rgba(0, 0, 0, 0.08);
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(117, 117, 117, 0.4);
+  --color-scrollbar: rgba(0, 0, 0, 0.42);
+
+  // Fluent fills with the accent's darker shade on light, its lighter one
+  // on dark.
+  --color-accent: color-mix(in srgb, var(--system-accent, #0078d4), black 15%);
+  --color-accent-fg: #ffffff;
+
+  --color-highlight-bg: rgba(0, 0, 0, 0.06);
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  // The accent's own colour rather than Fluent's darker fill shade.
+  --color-cursor-bg: var(--system-accent, #0078d4);
+  --color-cursor-fg: #ffffff;
+  --color-cursor-inactive: rgba(0, 0, 0, 0.05);
+
+  --color-destructive: #c42b1c;
+  --color-destructive-text: #c42b1c;
+
+  --radius-row: 4px;
+  --row-inset: 2px;
+  --row-padding-start: 0px;
+
+  --control-height: 28px;
+  --control-padding-x: 12px;
+  --radius-control: 4px;
+  --color-control-bg: #fbfbfb;
+  --color-control-hover-bg: #f6f6f6;
+  --color-control-active-bg: #f3f3f3;
+  --color-control-border: rgba(0, 0, 0, 0.06);
+  --color-control-border-bottom: rgba(0, 0, 0, 0.16);
+
+  --color-input-bg: #fdfdfd;
+  --color-input-border: rgba(0, 0, 0, 0.06);
+  --color-input-border-bottom: rgba(0, 0, 0, 0.45);
+  --input-focus-outline: none;
+  --input-focus-shadow: inset 0 -1px 0 var(--color-accent);
+  --input-focus-border-bottom: var(--color-accent);
+  --focus-ring: 2px solid var(--color-fg);
+  --focus-ring-offset: 1px;
+
+  --radius-dialog: 8px;
+  --color-dialog-border: rgba(117, 117, 117, 0.4);
+  --color-dialog-footer: #f3f3f3;
+  --color-dialog-footer-border: rgba(0, 0, 0, 0.06);
+  --dialog-action-flex: 1 1 0;
+  --shadow-dialog:
+    0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 21px rgba(0, 0, 0, 0.15);
+  --font-size-title: calc(var(--font-size-base) * 1.5);
+  --font-weight-title: 600;
+
+  --color-menu-bg: rgba(249, 249, 249, 0.95);
+  --menu-backdrop: blur(30px) saturate(1.25);
+  --radius-menu: 8px;
+  --radius-menu-item: 4px;
+  --menu-item-height: 28px;
+
+  // Flat tabs, as in dialogs, underlined.
+  --color-tab-separator: transparent;
+  --color-tab-active-bg: transparent;
+  --tab-mark-offset: -2px;
+  --color-tab-mark-idle: var(--color-border-strong);
+
+  @include dark {
+    --color-fg: #ffffff;
+    --color-fg-muted: #c5c5c5;
+    --color-chrome-fg: #c5c5c5;
+    --color-bg: #191919;
+    --color-chrome: #2b2b2b;
+    --color-chrome-light: #202020;
+    --color-surface: #2b2b2b;
+    --color-separator: rgba(255, 255, 255, 0.08);
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-scrollbar: rgba(255, 255, 255, 0.45);
+
+    --color-accent: color-mix(
+      in srgb,
+      var(--system-accent, #0078d4),
+      white 45%
+    );
+    --color-accent-fg: #000000;
+
+    --color-highlight-bg: rgba(255, 255, 255, 0.08);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 14%,
+      transparent
+    );
+    --color-cursor-inactive: rgba(255, 255, 255, 0.06);
+
+    --color-destructive: #c42b1c;
+    --color-destructive-text: #ff99a4;
+
+    --color-control-bg: #2d2d2d;
+    --color-control-hover-bg: #323232;
+    --color-control-active-bg: #272727;
+    --color-control-border: rgba(255, 255, 255, 0.08);
+    --color-control-border-bottom: rgba(255, 255, 255, 0.05);
+
+    --color-input-bg: #2a2a2a;
+    --color-input-border: rgba(255, 255, 255, 0.08);
+    --color-input-border-bottom: rgba(255, 255, 255, 0.54);
+
+    --color-dialog-footer: #202020;
+    --color-dialog-footer-border: rgba(255, 255, 255, 0.05);
+    --shadow-dialog:
+      0 32px 64px rgba(0, 0, 0, 0.37), 0 2px 21px rgba(0, 0, 0, 0.37);
+
+    --color-menu-bg: rgba(44, 44, 44, 0.96);
+  }
+
+  // Mica (Windows 11): the window behind the chrome is the system's
+  // backdrop, the title bar's included.
+  &[data-backdrop="mica"] {
+    --color-window-bg: transparent;
+    --color-chrome-light: transparent;
+  }
+
+  // Thin rounded thumbs on no track, as Fluent's scroll bars rest.
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 4px solid transparent;
+    border-radius: 6px;
+    background: var(--color-scrollbar) padding-box;
+
+    &:hover {
+      border-width: 3px;
+    }
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+// GNOME (libadwaita), the look of every Linux desktop but KDE: on GNOME
+// itself a header bar Newt draws, running on into the pane headers, which
+// turns to the window colour with the window in the background (elsewhere
+// the desktop's own title bar); flat borderless buttons and fields on a
+// translucent fill, inner focus rings, and floating dialogs whose buttons
+// share the bottom edge.
+:root[data-platform="gnome"] {
+  --font-ui:
+    var(--font-system, "Adwaita Sans"), "Adwaita Sans", Cantarell, system-ui,
+    sans-serif;
+  --font-mono: "Adwaita Mono", "Source Code Pro", "DejaVu Sans Mono", monospace;
+
+  --color-fg: #2e2e33;
+  --color-fg-muted: #77777c;
+  --color-chrome-fg: #6c6c71;
+  --color-bg: #ffffff;
+  --color-chrome: #ebebed;
+  // The header bar's colour: pane headers, status and tab bars are its
+  // continuation.
+  --color-chrome-light: #ffffff;
+  --color-surface: #fafafb;
+  --color-separator: rgba(0, 0, 6, 0.12);
+  --color-border: rgba(0, 0, 6, 0.12);
+  --color-border-strong: rgba(0, 0, 6, 0.15);
+
+  --color-accent: var(--system-accent, #3584e4);
+  --color-accent-text: color-mix(in srgb, var(--color-accent), black 18%);
+
+  --color-highlight-bg: rgba(0, 0, 6, 0.08);
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --color-cursor-inactive: rgba(0, 0, 6, 0.06);
+
+  --color-destructive: #e01b24;
+  --color-destructive-text: #c30000;
+
+  --radius-row: 6px;
+  --row-inset: 4px;
+  --row-padding-start: 2px;
+
+  --control-height: 34px;
+  --control-padding-x: 12px;
+  --radius-control: 6px;
+  --color-control-bg: rgba(0, 0, 6, 0.08);
+  --color-control-hover-bg: rgba(0, 0, 6, 0.12);
+  --color-control-active-bg: rgba(0, 0, 6, 0.24);
+  --color-control-border: transparent;
+  --color-control-border-bottom: transparent;
+
+  --color-input-bg: rgba(0, 0, 6, 0.08);
+  --color-input-border: transparent;
+  --input-focus-outline: 2px solid
+    color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --focus-ring: 2px solid
+    color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --focus-ring-offset: -2px;
+  --focus-ring-on-fill: 2px solid rgba(255, 255, 255, 0.5);
+
+  --radius-dialog: 15px;
+  --color-dialog-border: transparent;
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: transparent;
+  --dialog-action-flex: 1 1 0;
+  --shadow-dialog:
+    0 1px 3px 1px rgba(0, 0, 0, 0.09), 0 2px 14px 5px rgba(0, 0, 0, 0.09);
+  --font-size-title: calc(var(--font-size-base) * 1.18);
+  --font-weight-title: 700;
+
+  --color-menu-bg: #ffffff;
+  --radius-menu: 12px;
+  --radius-menu-item: 6px;
+  --menu-item-height: 32px;
+
+  // Flat tabs, as in dialogs, underlined.
+  --color-tab-separator: transparent;
+  --color-tab-active-bg: transparent;
+  --tab-mark-offset: -2px;
+  --color-tab-mark-idle: var(--color-border-strong);
+
+  // With the header bar Newt draws on GNOME itself; other desktops give
+  // the window their own title bar.
+  &[data-header-bar] {
+    &[data-window-inactive] {
+      --color-chrome-light: #fafafb;
+    }
+
+    // The window's corners. GTK rounds its frame but not the window's
+    // contents, so the window is see-through and the page rounds itself to
+    // match (`appearance.rs`), square while GTK squares the frame —
+    // maximized, tiled, full screen.
+    --window-radius: 12px;
+    clip-path: inset(0 round var(--window-radius));
+
+    &[data-square-corners],
+    &[data-maximized] {
+      --window-radius: 0px;
+    }
+
+    body {
+      background: transparent;
+    }
+
+    #root {
+      position: fixed;
+      inset: 0;
+      background: var(--color-window-bg);
+    }
+  }
+
+  @include dark {
+    --color-fg: #ffffff;
+    --color-fg-muted: #9a9a9f;
+    --color-chrome-fg: #a6a6ab;
+    --color-bg: #1d1d20;
+    --color-chrome: #2e2e32;
+    --color-chrome-light: #2e2e32;
+    --color-surface: #36363a;
+    --color-separator: rgba(0, 0, 6, 0.36);
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-border-strong: rgba(255, 255, 255, 0.14);
+
+    --color-accent-text: color-mix(in srgb, var(--color-accent), white 35%);
+
+    --color-highlight-bg: rgba(255, 255, 255, 0.1);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 20%,
+      transparent
+    );
+    --color-cursor-inactive: rgba(255, 255, 255, 0.07);
+
+    --color-destructive: #c01c28;
+    --color-destructive-text: #ff938c;
+
+    --color-control-bg: rgba(255, 255, 255, 0.1);
+    --color-control-hover-bg: rgba(255, 255, 255, 0.15);
+    --color-control-active-bg: rgba(255, 255, 255, 0.3);
+
+    --color-input-bg: rgba(255, 255, 255, 0.1);
+
+    --shadow-dialog:
+      0 1px 3px 1px rgba(0, 0, 0, 0.3), 0 2px 14px 5px rgba(0, 0, 0, 0.25);
+
+    --color-menu-bg: #36363a;
+
+    &[data-header-bar][data-window-inactive] {
+      --color-chrome-light: #222226;
+    }
+  }
+}
+
+// KDE Plasma (Breeze), in the user's own colour scheme (`--scheme-*`, from
+// kdeglobals) with Breeze's colours where it sets none: pane headers in the
+// scheme's header colour, so KWin's title bar runs on into them; framed
+// buttons whose edge lights up in the accent on hover, a tinted default
+// button, and an accent frame around a focused field.
+:root[data-platform="kde"] {
+  --font-ui:
+    var(--font-system, "Noto Sans"), "Noto Sans", system-ui, sans-serif;
+  --font-mono: Hack, "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+
+  --color-fg: var(--scheme-view-fg, #232629);
+  --color-fg-muted: var(--scheme-window-fg-inactive, #707d8a);
+  // The header's own text, a little softened: the scheme's inactive text
+  // is meant for the view and fades into the header.
+  --color-chrome-fg: color-mix(
+    in srgb,
+    var(--scheme-header-fg, #232629) 75%,
+    transparent
+  );
+  --color-bg: var(--scheme-view-bg, #ffffff);
+  --color-chrome: var(--scheme-window-bg, #eff0f1);
+  --color-chrome-light: var(--scheme-header-bg, #dee0e2);
+  --color-surface: var(--scheme-window-bg, #eff0f1);
+  --color-separator: rgba(35, 38, 41, 0.14);
+  --color-border: rgba(35, 38, 41, 0.18);
+  --color-border-strong: rgba(35, 38, 41, 0.24);
+
+  --color-accent: var(--system-accent, #3daee9);
+  --color-accent-fg: var(--scheme-selection-fg, #ffffff);
+  --color-accent-text: color-mix(in srgb, var(--color-accent), black 25%);
+
+  --color-highlight-bg: color-mix(
+    in srgb,
+    var(--color-accent) 22%,
+    transparent
+  );
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  // Breeze's light accent, a shade darker so white text reads on it.
+  --color-cursor-bg: color-mix(in srgb, var(--color-accent), black 20%);
+  --color-cursor-inactive: rgba(35, 38, 41, 0.07);
+
+  --color-destructive: #da4453;
+  --color-destructive-text: #da4453;
+
+  --radius-row: 3px;
+  --row-inset: 2px;
+  --row-padding-start: 0px;
+
+  --control-height: 30px;
+  --control-padding-x: 12px;
+  --radius-control: 5px;
+  --color-control-bg: var(--scheme-button-bg, #fcfcfc);
+  --color-control-hover-bg: var(--color-control-bg);
+  --color-control-active-bg: color-mix(
+    in srgb,
+    var(--color-accent) 25%,
+    var(--color-control-bg)
+  );
+  --color-control-border: rgba(35, 38, 41, 0.22);
+  --color-control-border-bottom: rgba(35, 38, 41, 0.26);
+  --color-control-hover-border: var(--color-accent);
+  --control-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+
+  --color-suggested-bg: color-mix(
+    in srgb,
+    var(--color-accent) 20%,
+    var(--color-control-bg)
+  );
+  --color-suggested-hover-bg: color-mix(
+    in srgb,
+    var(--color-accent) 28%,
+    var(--color-control-bg)
+  );
+  --color-suggested-active-bg: color-mix(
+    in srgb,
+    var(--color-accent) 38%,
+    var(--color-control-bg)
+  );
+  --color-suggested-fg: var(--scheme-button-fg, var(--color-fg));
+  --color-suggested-border: var(--color-accent);
+
+  --color-input-bg: var(--scheme-view-bg, #ffffff);
+  --color-input-border: rgba(35, 38, 41, 0.22);
+  --input-focus-outline: none;
+  --input-focus-border: var(--color-accent);
+  --input-focus-shadow: 0 0 0 1px
+    color-mix(in srgb, var(--color-accent) 35%, transparent);
+  --focus-ring: 1px solid var(--scheme-focus, var(--color-accent));
+  --focus-ring-offset: 1px;
+
+  --radius-dialog: 6px;
+  --color-dialog-border: rgba(35, 38, 41, 0.24);
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: var(--color-separator);
+  --shadow-dialog: 0 4px 18px rgba(0, 0, 0, 0.2);
+  --font-size-title: calc(var(--font-size-base) * 1.25);
+  --font-weight-title: 500;
+
+  --color-menu-bg: var(--scheme-window-bg, #ffffff);
+  --radius-menu: 6px;
+  --radius-menu-item: 3px;
+  --menu-item-height: 28px;
+
+  // KWin colours an inactive title bar from the scheme too.
+  &[data-window-inactive] {
+    --color-chrome-light: var(--scheme-header-bg-inactive, #eff0f1);
+  }
+
+  @include dark {
+    --color-fg: var(--scheme-view-fg, #fcfcfc);
+    --color-fg-muted: var(--scheme-window-fg-inactive, #a1a9b1);
+    --color-chrome-fg: color-mix(
+      in srgb,
+      var(--scheme-header-fg, #fcfcfc) 75%,
+      transparent
+    );
+    --color-bg: var(--scheme-view-bg, #141618);
+    --color-chrome: var(--scheme-window-bg, #202326);
+    --color-chrome-light: var(--scheme-header-bg, #2a2e32);
+    --color-surface: var(--scheme-window-bg, #202326);
+    --color-separator: rgba(252, 252, 252, 0.1);
+    --color-border: rgba(252, 252, 252, 0.14);
+    --color-border-strong: rgba(252, 252, 252, 0.18);
+
+    --color-accent-text: var(--color-accent);
+
+    --color-highlight-bg: color-mix(
+      in srgb,
+      var(--color-accent) 28%,
+      transparent
+    );
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 18%,
+      transparent
+    );
+    --color-cursor-inactive: rgba(252, 252, 252, 0.08);
+
+    --color-destructive-text: #ed6a75;
+
+    --color-control-bg: var(--scheme-button-bg, #292c30);
+    --color-control-border: rgba(252, 252, 252, 0.16);
+    --color-control-border-bottom: rgba(252, 252, 252, 0.12);
+    --control-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+
+    --color-input-bg: var(--scheme-view-bg, #141618);
+    --color-input-border: rgba(252, 252, 252, 0.16);
+
+    --color-dialog-border: rgba(252, 252, 252, 0.16);
+    --shadow-dialog: 0 4px 18px rgba(0, 0, 0, 0.45);
+
+    --color-menu-bg: var(--scheme-window-bg, #292c30);
+
+    &[data-window-inactive] {
+      --color-chrome-light: var(--scheme-header-bg-inactive, #202326);
+    }
+  }
+}
