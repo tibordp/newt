@@ -143,26 +143,31 @@
   &::before {
     content: "";
     position: absolute;
-    inset: 0 var(--space-1);
+    inset: 0 var(--row-inset);
     z-index: -1;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-row);
   }
 
   &.cursor::before {
     background: var(--color-cursor-inactive);
   }
 
+  // The file list's cursor (see `--color-cursor-name`).
   .list:focus &.cursor {
-    color: var(--color-accent-fg);
+    color: var(--color-cursor-fg);
 
     &::before {
-      background: var(--color-accent);
+      background: var(--color-cursor-bg);
+      box-shadow: var(--cursor-ring);
     }
 
-    :global(.file-icon),
+    :global(.file-icon) {
+      color: var(--color-cursor-icon, var(--icon-color));
+    }
+
     .problem,
     .folder {
-      color: var(--color-accent-fg);
+      color: var(--color-cursor-name, var(--own-color, currentColor));
     }
   }
 }
@@ -192,7 +197,8 @@
 }
 
 .folder {
-  color: var(--color-fg-muted);
+  --own-color: var(--color-fg-muted);
+  color: var(--own-color);
 }
 
 .problem {
@@ -204,11 +210,13 @@
 }
 
 .rowError .problem {
-  color: var(--color-error);
+  --own-color: var(--color-error);
+  color: var(--own-color);
 }
 
 .rowWarning .problem {
-  color: var(--color-warning);
+  --own-color: var(--color-warning);
+  color: var(--own-color);
 }
 
 .empty {

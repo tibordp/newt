@@ -1,9 +1,11 @@
 @use "../styles/forced-colors" as fc;
 
 .content {
-  background: var(--color-surface);
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--menu-backdrop);
+  backdrop-filter: var(--menu-backdrop);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-menu);
   box-shadow: var(--shadow-dialog);
   padding: 4px;
   z-index: 300;
@@ -14,27 +16,32 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 28px;
+  height: var(--menu-item-height);
   padding: 0 var(--space-4);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-menu-item);
   font: inherit;
   color: var(--color-fg);
   cursor: default;
   user-select: none;
 
+  // A listbox-style menu (the sort menu, the history navigator) moves its
+  // own highlight and marks it `aria-selected`.
   &[data-highlighted],
-  &[data-state="open"] {
-    background: var(--color-selected-bg);
+  &[data-state="open"],
+  &[role="option"][aria-selected="true"] {
+    background: var(--color-highlight-bg);
+    color: var(--color-highlight-fg);
     outline: none;
     @include fc.selected;
-  }
 
-  // A row of a listbox-style menu (the sort menu, the history navigator)
-  // that moves its own highlight and marks it `aria-selected`.
-  &[role="option"][aria-selected="true"] {
-    background: var(--color-accent);
-    color: var(--color-accent-fg);
-    @include fc.selected;
+    .shortcut,
+    .itemCheck,
+    .checkColumn,
+    .itemDetail,
+    .itemMeta,
+    .itemDismiss {
+      color: inherit;
+    }
   }
 
   &[data-disabled] {
@@ -130,10 +137,7 @@
     color: var(--color-fg);
   }
 
-  .item[role="option"][aria-selected="true"] & {
-    color: var(--color-accent-fg);
-    &:hover {
-      background: rgba(255, 255, 255, 0.2);
-    }
+  .item[role="option"][aria-selected="true"] &:hover {
+    background: color-mix(in srgb, currentColor 20%, transparent);
   }
 }

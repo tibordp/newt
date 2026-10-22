@@ -7,3 +7,18 @@
     outline-offset: -2px;
   }
 }
+
+// A text field's focus, for elements drawn as one as well as the real ones
+// (`_base.scss`).
+@mixin field {
+  &:focus {
+    outline: var(--input-focus-outline);
+    outline-offset: -1px;
+    box-shadow: var(--input-focus-shadow);
+    border-color: var(--input-focus-border, var(--color-input-border));
+    border-bottom-color: var(
+      --input-focus-border-bottom,
+      var(--input-focus-border, var(--color-input-border-bottom))
+    );
+  }
+}

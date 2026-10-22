@@ -139,7 +139,7 @@ export const allColumns: ColumnDef[] = [
         sortKey: "name",
         name: "Name",
         style: {
-          flexBasis: "60px",
+          flexBasis: "5em",
         },
       },
       {

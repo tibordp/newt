@@ -11,12 +11,42 @@
   // The terminal's text; its background is --color-bg.
   --color-terminal-fg: var(--_gray-800);
 
-  // Accent
-  --color-accent: var(--_blue-500);
+  // Accent: the system's (`--system-accent`, set from Rust) where it has
+  // one. Hover and press move it towards the theme's far end.
+  --color-accent: var(--system-accent, var(--_blue-500));
   --color-accent-fg: #ffffff;
-  --color-accent-hover: var(--_blue-600);
-  --color-accent-active: var(--_blue-700);
-  --color-selected-bg: var(--_blue-400);
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--color-accent),
+    var(--_shade) 10%
+  );
+  --color-accent-active: color-mix(
+    in srgb,
+    var(--color-accent),
+    var(--_shade) 20%
+  );
+  // The accent as text on the page.
+  --color-accent-text: var(--color-accent);
+
+  // The item that has the keyboard in a menu or palette.
+  --color-highlight-bg: var(--color-accent);
+  --color-highlight-fg: var(--color-accent-fg);
+
+  // Marked files.
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --color-selected-fg: var(--color-accent-text);
+
+  // The file list's cursor in the pane that has the keyboard. On a fill,
+  // the row's name and icon take `--color-cursor-name` and
+  // `--color-cursor-icon`; a platform whose cursor is a tint sets those
+  // `initial`, and the row keeps its own colours.
+  --color-cursor-bg: var(--color-highlight-bg);
+  --color-cursor-fg: var(--color-highlight-fg);
+  --color-cursor-name: var(--color-highlight-fg);
+  --color-cursor-icon: var(--color-highlight-fg);
+  --cursor-ring: none;
+  // A bar at the row's leading edge, as wide as this.
+  --cursor-pill-width: 0px;
 
   // File list while a filter is hiding rows.
   --color-bg-filtered: var(--_bg-filtered);
@@ -36,16 +66,39 @@
   --color-button-hover-bg: var(--_gray-400);
   --color-button-active-bg: var(--_gray-500);
 
+  // Push buttons and text fields
+  --control-height: 28px;
+  --control-padding-x: var(--space-5);
+  --radius-control: var(--radius-md);
+  // A dialog's action buttons; buttons restyled elsewhere don't take these.
+  --radius-button: var(--radius-control);
+  --control-shadow: none;
+
   // Push buttons: a raised face with a hairline edge
   --color-control-bg: var(--_control-bg);
   --color-control-hover-bg: var(--_control-hover-bg);
   --color-control-active-bg: var(--_control-active-bg);
   --color-control-border: var(--_control-border);
   --color-control-border-bottom: var(--_control-border-bottom);
+  // Unset: hovering keeps the edge.
+  --color-control-hover-border: initial;
+
+  // The dialog's default action
+  --color-suggested-bg: var(--color-accent);
+  --color-suggested-hover-bg: var(--color-accent-hover);
+  --color-suggested-active-bg: var(--color-accent-active);
+  --color-suggested-fg: var(--color-accent-fg);
+  --color-suggested-border: transparent;
 
   // Input
   --color-input-bg: var(--_gray-50);
   --color-input-border: var(--_input-border);
+  --color-input-border-bottom: var(--color-input-border);
+  --input-focus-outline: var(--focus-ring);
+  --input-focus-shadow: none;
+  // Unset: focus keeps the edge.
+  --input-focus-border: initial;
+  --input-focus-border-bottom: initial;
 
   // Status
   --color-success: var(--_green-500);
@@ -66,7 +119,8 @@
   --color-destructive-text: var(--_destructive-text);
 
   // Focus
-  --focus-ring: 2px solid var(--_blue-500);
+  --focus-ring: 2px solid var(--color-accent);
+  --focus-ring-offset: 1px;
 
   // Borders
   --color-border: var(--_border);
@@ -83,7 +137,25 @@
   --shadow-header: var(--_shadow-header);
 
   // Dialog chrome
+  --radius-dialog: var(--radius-lg);
+  --color-dialog-border: var(--color-border-strong);
   --color-dialog-footer: var(--_dialog-footer-tint);
+  --color-dialog-footer-border: var(--color-border);
+  // How a footer's buttons share its width.
+  --dialog-action-flex: 0 0 auto;
+  --font-size-title: var(--font-size-lg);
+  --font-weight-title: 600;
+
+  // Menus and dropdowns
+  --color-menu-bg: var(--color-surface);
+  --menu-backdrop: none;
+  --radius-menu: var(--radius-md);
+  --radius-menu-item: var(--radius-sm);
+  --menu-item-height: 28px;
+
+  // The strip macOS draws the window's title and controls on.
+  --titlebar-height: 0px;
+  --color-titlebar: var(--color-chrome-light);
 
   // Drag rect
   --color-drag-rect-bg: var(--_drag-rect-bg);
@@ -113,9 +185,14 @@
   --space-7: 20px;
   --space-8: 24px;
 
-  // File list row height. Row icons and cell metrics scale off it, and
-  // `density.ts` restates it for the pane's virtualization arithmetic.
+  // File list row height, published by MainWindow from `density.ts`. Row
+  // icons and cell metrics scale off it.
   --row-height: 22px;
+  // A row's highlight, inset from the pane's edges.
+  --radius-row: var(--radius-md);
+  --row-inset: var(--space-1);
+  // Where a row's (and the column header's) content starts.
+  --row-padding-start: 3px;
   // The column header above the file list.
   --header-height: calc(var(--row-height) + 2px);
 
@@ -124,21 +201,15 @@
   --radius-md: 6px;
   --radius-lg: 12px;
 
-  // Type scale (base font is 13px, set in _reset.scss)
-  --font-size-xs: 10px;
-  --font-size-sm: 12px;
-  --font-size-md: 13px;
-  --font-size-lg: 15px;
+  // Type: the system UI font (`--font-system`, set from Rust) where it
+  // reports one, at the platform's size (`--font-size-base`, likewise).
+  --font-ui: var(--font-system, system-ui), -apple-system, sans-serif;
+  --font-size-base: 13px;
+  --font-size-xs: calc(var(--font-size-base) - 3px);
+  --font-size-sm: calc(var(--font-size-base) - 1px);
+  --font-size-md: var(--font-size-base);
+  --font-size-lg: calc(var(--font-size-base) + 2px);
 
   // Monospace (logs, transcripts; the terminal configures xterm directly)
   --font-mono: Menlo, Monaco, "Courier New", monospace;
-}
-
-// Set from the `appearance.density` preference (MainWindow).
-[data-density="compact"] {
-  --row-height: 20px;
-}
-
-[data-density="spacious"] {
-  --row-height: 24px;
 }

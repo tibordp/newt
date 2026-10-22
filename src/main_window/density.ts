@@ -1,15 +1,27 @@
-import type { Density } from "../lib/bindings";
+import type { Density, PlatformStyle } from "../lib/bindings";
+import { fontSize, useAppearance } from "../lib/appearance";
 
-/// File list row height in px per density, mirroring the `--row-height`
-/// values in `_tokens.scss`. The pane's virtualization arithmetic needs the
-/// number itself, so it is stated here rather than read back off computed
-/// style; the two must stay in step or rows and spacers drift apart.
-export const ROW_HEIGHT: Record<Density, number> = {
-  compact: 20,
-  comfortable: 22,
-  spacious: 24,
+/// Room around a file list row's text at the default density: Finder's 22px
+/// rows at 13px, Explorer's 22px at 12px, roomier rows on GNOME and KDE.
+const ROW_PADDING: Record<PlatformStyle, number> = {
+  macos: 9,
+  windows: 10,
+  gnome: 11,
+  kde: 10,
 };
 
-export function rowHeightFor(density: Density | undefined): number {
-  return ROW_HEIGHT[density ?? "comfortable"];
+const DENSITY_STEP: Record<Density, number> = {
+  compact: -2,
+  comfortable: 0,
+  spacious: 2,
+};
+
+/// File list row height in px. MainWindow publishes it as `--row-height`,
+/// and the pane's virtualization arithmetic uses the same number.
+export function useRowHeight(density: Density | undefined): number {
+  const appearance = useAppearance();
+  return (
+    Math.round(fontSize(appearance) + ROW_PADDING[appearance.platform]) +
+    DENSITY_STEP[density ?? "comfortable"]
+  );
 }

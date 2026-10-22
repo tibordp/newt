@@ -23,11 +23,11 @@
     }
 
     &[data-selected="true"] {
-      background: var(--color-accent);
-      color: var(--color-accent-fg);
+      background: var(--color-highlight-bg);
+      color: var(--color-highlight-fg);
 
       .dir {
-        color: var(--color-accent-fg);
+        color: inherit;
         opacity: 0.7;
       }
       @include fc.selected;

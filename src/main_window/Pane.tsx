@@ -49,7 +49,7 @@ import {
   getVisibleColumns,
   moveColumn,
 } from "./columns";
-import { rowHeightFor } from "./density";
+import { useRowHeight } from "./density";
 import { usePreferences } from "../lib/preferences";
 import { useCommandShortcuts } from "../lib/scopedBindings";
 import { IconMaximize, IconPaneSide, IconRestore } from "./modals/primitives";
@@ -1139,7 +1139,7 @@ function PaneInner(
     [preferences?.bindings],
   );
 
-  const rowHeight = rowHeightFor(preferences?.settings?.appearance?.density);
+  const rowHeight = useRowHeight(preferences?.settings?.appearance?.density);
 
   const columns = useMemo(
     () =>

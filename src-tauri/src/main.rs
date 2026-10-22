@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 extern crate objc; // v0.2.7
 
+pub mod appearance;
 pub mod associations;
 pub mod clipboard;
 pub mod cmd;
@@ -1202,6 +1203,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(global_ctx)
         .setup(move |app| {
+            appearance::init();
             if let Ok(dir) = app.path().app_log_dir() {
                 crash_report::install(dir);
             }

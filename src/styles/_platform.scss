@@ -1,0 +1,527 @@
+// The platform layer: each system's design language as token values over
+// the shared design. `data-platform` (set from `appearance.ts`) picks the
+// block; components read tokens and never the platform. Where the system
+// supplies a value — its accent (`--system-accent`), its UI font
+// (`--font-system`, `--font-size-base`) — that wins over the defaults here.
+
+// A block's dark-theme values, following the theme cascade in
+// `_theme-dark.scss`.
+@mixin dark {
+  @media (prefers-color-scheme: dark) {
+    &:not([data-theme="light"]) {
+      @content;
+    }
+  }
+
+  &[data-theme="dark"] {
+    @content;
+  }
+}
+
+// macOS 26: SF at 13pt, the accent as a fill for whatever has the
+// keyboard, capsule push buttons, an accent halo around a focused field,
+// translucent menus, and sheets with no footer chrome.
+:root[data-platform="macos"] {
+  --font-ui: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-fg: #262626;
+  --color-fg-muted: #7a7a7a;
+  --color-chrome-fg: #6e6e6e;
+  --color-bg: #ffffff;
+  --color-chrome: #ececec;
+  --color-chrome-light: #f7f7f7;
+  --color-surface: #f2f2f2;
+  --color-separator: rgba(0, 0, 0, 0.1);
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-border-strong: rgba(0, 0, 0, 0.16);
+
+  --color-accent: var(--system-accent, #007aff);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  // The unemphasized selection: the other pane's cursor, any cursor while
+  // the window is in the background.
+  --color-cursor-inactive: rgba(0, 0, 0, 0.1);
+
+  --color-destructive: #ff3b30;
+  --color-destructive-text: #e0352b;
+
+  --radius-row: 6px;
+  --row-inset: 4px;
+  --row-padding-start: 6px;
+
+  --control-height: 24px;
+  --control-padding-x: 14px;
+  --radius-control: 7px;
+  --radius-button: 999px;
+  --color-control-bg: #ffffff;
+  --color-control-hover-bg: #ffffff;
+  --color-control-active-bg: #e8e8e8;
+  --color-control-border: rgba(0, 0, 0, 0.12);
+  --color-control-border-bottom: rgba(0, 0, 0, 0.2);
+  --control-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.1);
+
+  --color-input-bg: #ffffff;
+  --color-input-border: rgba(0, 0, 0, 0.14);
+  --input-focus-outline: none;
+  --input-focus-shadow: 0 0 0 3.5px
+    color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --input-focus-border: color-mix(
+    in srgb,
+    var(--color-accent) 70%,
+    transparent
+  );
+  --focus-ring: 3.5px solid
+    color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --focus-ring-offset: 0px;
+
+  --radius-dialog: 18px;
+  --color-dialog-border: rgba(0, 0, 0, 0.1);
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: transparent;
+  --shadow-dialog:
+    0 18px 50px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --font-size-title: var(--font-size-base);
+  --font-weight-title: 700;
+
+  --color-menu-bg: rgba(246, 246, 246, 0.94);
+  --menu-backdrop: blur(24px) saturate(1.8);
+  --radius-menu: 12px;
+  --radius-menu-item: 7px;
+  --menu-item-height: 24px;
+
+  @include dark {
+    --color-fg: #dddddd;
+    --color-fg-muted: #989898;
+    --color-chrome-fg: #a0a0a0;
+    --color-bg: #1e1e1e;
+    --color-chrome: #323232;
+    --color-chrome-light: #262626;
+    --color-surface: #2c2c2c;
+    --color-separator: rgba(255, 255, 255, 0.1);
+    --color-border: rgba(255, 255, 255, 0.12);
+    --color-border-strong: rgba(255, 255, 255, 0.16);
+
+    --color-accent: var(--system-accent, #0a84ff);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 26%,
+      transparent
+    );
+    --color-cursor-inactive: rgba(255, 255, 255, 0.14);
+
+    --color-destructive: #ff453a;
+    --color-destructive-text: #ff6961;
+
+    --color-control-bg: #5b5b5b;
+    --color-control-hover-bg: #5b5b5b;
+    --color-control-active-bg: #6c6c6c;
+    --color-control-border: rgba(255, 255, 255, 0.06);
+    --color-control-border-bottom: rgba(0, 0, 0, 0.3);
+    --control-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.3);
+
+    --color-input-bg: #282828;
+    --color-input-border: rgba(255, 255, 255, 0.14);
+
+    --color-dialog-border: rgba(255, 255, 255, 0.14);
+    --shadow-dialog:
+      0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+
+    --color-menu-bg: rgba(42, 42, 42, 0.94);
+  }
+}
+
+// Windows 11: Segoe UI at 9pt, Fluent's elevation edges on controls, an
+// accent underline under a focused field, a tinted list selection with the
+// accent pill, acrylic menus, and dialogs whose buttons share a footer.
+:root[data-platform="windows"] {
+  --font-ui:
+    var(--font-system, "Segoe UI Variable Text"), "Segoe UI Variable Text",
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+
+  --color-fg: #1b1b1b;
+  --color-fg-muted: #616161;
+  --color-chrome-fg: #5c5c5c;
+  --color-bg: #ffffff;
+  --color-chrome: #ebebeb;
+  --color-chrome-light: #f3f3f3;
+  --color-surface: #ffffff;
+  --color-separator: rgba(0, 0, 0, 0.08);
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(117, 117, 117, 0.4);
+
+  // Fluent fills with the accent's darker shade on light, its lighter one
+  // on dark.
+  --color-accent: color-mix(in srgb, var(--system-accent, #0078d4), black 15%);
+  --color-accent-fg: #ffffff;
+
+  --color-highlight-bg: rgba(0, 0, 0, 0.06);
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --color-cursor-fg: var(--color-fg);
+  --color-cursor-name: initial;
+  --color-cursor-icon: initial;
+  --cursor-pill-width: 3px;
+  --color-cursor-inactive: rgba(0, 0, 0, 0.05);
+
+  --color-destructive: #c42b1c;
+  --color-destructive-text: #c42b1c;
+
+  --radius-row: 4px;
+  --row-inset: 4px;
+  --row-padding-start: 10px;
+
+  --control-height: 28px;
+  --control-padding-x: 12px;
+  --radius-control: 4px;
+  --color-control-bg: #fbfbfb;
+  --color-control-hover-bg: #f6f6f6;
+  --color-control-active-bg: #f3f3f3;
+  --color-control-border: rgba(0, 0, 0, 0.06);
+  --color-control-border-bottom: rgba(0, 0, 0, 0.16);
+
+  --color-input-bg: #fdfdfd;
+  --color-input-border: rgba(0, 0, 0, 0.06);
+  --color-input-border-bottom: rgba(0, 0, 0, 0.45);
+  --input-focus-outline: none;
+  --input-focus-shadow: inset 0 -1px 0 var(--color-accent);
+  --input-focus-border-bottom: var(--color-accent);
+  --focus-ring: 2px solid var(--color-fg);
+  --focus-ring-offset: 1px;
+
+  --radius-dialog: 8px;
+  --color-dialog-border: rgba(117, 117, 117, 0.4);
+  --color-dialog-footer: #f3f3f3;
+  --color-dialog-footer-border: rgba(0, 0, 0, 0.06);
+  --dialog-action-flex: 1 1 0;
+  --shadow-dialog:
+    0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 21px rgba(0, 0, 0, 0.15);
+  --font-size-title: calc(var(--font-size-base) * 1.5);
+  --font-weight-title: 600;
+
+  --color-menu-bg: rgba(249, 249, 249, 0.95);
+  --menu-backdrop: blur(30px) saturate(1.25);
+  --radius-menu: 8px;
+  --radius-menu-item: 4px;
+  --menu-item-height: 28px;
+
+  @include dark {
+    --color-fg: #ffffff;
+    --color-fg-muted: #c5c5c5;
+    --color-chrome-fg: #c5c5c5;
+    --color-bg: #191919;
+    --color-chrome: #2b2b2b;
+    --color-chrome-light: #202020;
+    --color-surface: #2b2b2b;
+    --color-separator: rgba(255, 255, 255, 0.08);
+    --color-border: rgba(255, 255, 255, 0.08);
+
+    --color-accent: color-mix(
+      in srgb,
+      var(--system-accent, #0078d4),
+      white 45%
+    );
+    --color-accent-fg: #000000;
+
+    --color-highlight-bg: rgba(255, 255, 255, 0.08);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 14%,
+      transparent
+    );
+    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 22%, transparent);
+    --color-cursor-inactive: rgba(255, 255, 255, 0.06);
+
+    --color-destructive: #c42b1c;
+    --color-destructive-text: #ff99a4;
+
+    --color-control-bg: #2d2d2d;
+    --color-control-hover-bg: #323232;
+    --color-control-active-bg: #272727;
+    --color-control-border: rgba(255, 255, 255, 0.08);
+    --color-control-border-bottom: rgba(255, 255, 255, 0.05);
+
+    --color-input-bg: #2a2a2a;
+    --color-input-border: rgba(255, 255, 255, 0.08);
+    --color-input-border-bottom: rgba(255, 255, 255, 0.54);
+
+    --color-dialog-footer: #202020;
+    --color-dialog-footer-border: rgba(255, 255, 255, 0.05);
+    --shadow-dialog:
+      0 32px 64px rgba(0, 0, 0, 0.37), 0 2px 21px rgba(0, 0, 0, 0.37);
+
+    --color-menu-bg: rgba(44, 44, 44, 0.96);
+  }
+}
+
+// GNOME (libadwaita): the system font at its own size, flat borderless
+// buttons and fields on a translucent fill, inner focus rings, rounded
+// list rows with an accent tint, and floating dialogs whose buttons share
+// the bottom edge.
+:root[data-platform="gnome"] {
+  --font-ui:
+    var(--font-system, "Adwaita Sans"), "Adwaita Sans", Cantarell, system-ui,
+    sans-serif;
+  --font-mono: "Adwaita Mono", "Source Code Pro", "DejaVu Sans Mono", monospace;
+
+  --color-fg: #2e2e33;
+  --color-fg-muted: #77777c;
+  --color-chrome-fg: #6c6c71;
+  --color-bg: #ffffff;
+  --color-chrome: #ebebed;
+  --color-chrome-light: #fafafb;
+  --color-surface: #fafafb;
+  --color-separator: rgba(0, 0, 6, 0.1);
+  --color-border: rgba(0, 0, 6, 0.12);
+  --color-border-strong: rgba(0, 0, 6, 0.15);
+
+  --color-accent: var(--system-accent, #3584e4);
+  --color-accent-text: color-mix(in srgb, var(--color-accent), black 18%);
+
+  --color-highlight-bg: rgba(0, 0, 6, 0.08);
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  --color-cursor-fg: var(--color-fg);
+  --color-cursor-name: initial;
+  --color-cursor-icon: initial;
+  --cursor-ring: inset 0 0 0 2px
+    color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --color-cursor-inactive: rgba(0, 0, 6, 0.06);
+
+  --color-destructive: #e01b24;
+  --color-destructive-text: #c30000;
+
+  --radius-row: 6px;
+  --row-inset: 6px;
+  --row-padding-start: 8px;
+
+  --control-height: 34px;
+  --control-padding-x: 12px;
+  --radius-control: 6px;
+  --color-control-bg: rgba(0, 0, 6, 0.08);
+  --color-control-hover-bg: rgba(0, 0, 6, 0.12);
+  --color-control-active-bg: rgba(0, 0, 6, 0.24);
+  --color-control-border: transparent;
+  --color-control-border-bottom: transparent;
+
+  --color-input-bg: rgba(0, 0, 6, 0.08);
+  --color-input-border: transparent;
+  --input-focus-outline: 2px solid
+    color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --focus-ring: 2px solid
+    color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --focus-ring-offset: -2px;
+
+  --radius-dialog: 15px;
+  --color-dialog-border: transparent;
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: transparent;
+  --dialog-action-flex: 1 1 0;
+  --shadow-dialog:
+    0 1px 3px 1px rgba(0, 0, 0, 0.09), 0 2px 14px 5px rgba(0, 0, 0, 0.09);
+  --font-size-title: calc(var(--font-size-base) * 1.18);
+  --font-weight-title: 700;
+
+  --color-menu-bg: #ffffff;
+  --radius-menu: 12px;
+  --radius-menu-item: 6px;
+  --menu-item-height: 32px;
+
+  @include dark {
+    --color-fg: #ffffff;
+    --color-fg-muted: #9a9a9f;
+    --color-chrome-fg: #a6a6ab;
+    --color-bg: #1d1d20;
+    --color-chrome: #2e2e32;
+    --color-chrome-light: #2e2e32;
+    --color-surface: #36363a;
+    --color-separator: rgba(0, 0, 0, 0.36);
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-border-strong: rgba(255, 255, 255, 0.14);
+
+    --color-accent-text: color-mix(in srgb, var(--color-accent), white 35%);
+
+    --color-highlight-bg: rgba(255, 255, 255, 0.1);
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 20%,
+      transparent
+    );
+    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 32%, transparent);
+    --color-cursor-inactive: rgba(255, 255, 255, 0.07);
+
+    --color-destructive: #c01c28;
+    --color-destructive-text: #ff938c;
+
+    --color-control-bg: rgba(255, 255, 255, 0.1);
+    --color-control-hover-bg: rgba(255, 255, 255, 0.15);
+    --color-control-active-bg: rgba(255, 255, 255, 0.3);
+
+    --color-input-bg: rgba(255, 255, 255, 0.1);
+
+    --shadow-dialog:
+      0 1px 3px 1px rgba(0, 0, 0, 0.3), 0 2px 14px 5px rgba(0, 0, 0, 0.25);
+
+    --color-menu-bg: #36363a;
+  }
+}
+
+// KDE Plasma (Breeze): the system font at its own size, framed buttons
+// whose edge lights up in the accent on hover, a tinted default button, an
+// accent frame around a focused field, and list rows tinted with an accent
+// frame for the cursor.
+:root[data-platform="kde"] {
+  --font-ui:
+    var(--font-system, "Noto Sans"), "Noto Sans", system-ui, sans-serif;
+  --font-mono: Hack, "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+
+  --color-fg: #232629;
+  --color-fg-muted: #707d8a;
+  --color-chrome-fg: #5c636b;
+  --color-bg: #ffffff;
+  --color-chrome: #dee0e2;
+  --color-chrome-light: #eff0f1;
+  --color-surface: #eff0f1;
+  --color-separator: rgba(35, 38, 41, 0.14);
+  --color-border: rgba(35, 38, 41, 0.18);
+  --color-border-strong: rgba(35, 38, 41, 0.24);
+
+  --color-accent: var(--system-accent, #3daee9);
+  --color-accent-fg: #ffffff;
+  --color-accent-text: color-mix(in srgb, var(--color-accent), black 25%);
+
+  --color-highlight-bg: color-mix(
+    in srgb,
+    var(--color-accent) 22%,
+    transparent
+  );
+  --color-highlight-fg: var(--color-fg);
+  --color-selected-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --color-cursor-bg: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  --color-cursor-fg: var(--color-fg);
+  --color-cursor-name: initial;
+  --color-cursor-icon: initial;
+  --cursor-ring: inset 0 0 0 1px var(--color-accent);
+  --color-cursor-inactive: rgba(35, 38, 41, 0.07);
+
+  --color-destructive: #da4453;
+  --color-destructive-text: #da4453;
+
+  --radius-row: 3px;
+  --row-inset: 2px;
+  --row-padding-start: 4px;
+
+  --control-height: 30px;
+  --control-padding-x: 12px;
+  --radius-control: 5px;
+  --color-control-bg: #fcfcfc;
+  --color-control-hover-bg: #fcfcfc;
+  --color-control-active-bg: color-mix(
+    in srgb,
+    var(--color-accent) 25%,
+    #fcfcfc
+  );
+  --color-control-border: rgba(35, 38, 41, 0.22);
+  --color-control-border-bottom: rgba(35, 38, 41, 0.26);
+  --color-control-hover-border: var(--color-accent);
+  --control-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+
+  --color-suggested-bg: color-mix(in srgb, var(--color-accent) 20%, #fcfcfc);
+  --color-suggested-hover-bg: color-mix(
+    in srgb,
+    var(--color-accent) 28%,
+    #fcfcfc
+  );
+  --color-suggested-active-bg: color-mix(
+    in srgb,
+    var(--color-accent) 38%,
+    #fcfcfc
+  );
+  --color-suggested-fg: var(--color-fg);
+  --color-suggested-border: var(--color-accent);
+
+  --color-input-bg: #ffffff;
+  --color-input-border: rgba(35, 38, 41, 0.22);
+  --input-focus-outline: none;
+  --input-focus-border: var(--color-accent);
+  --input-focus-shadow: 0 0 0 1px
+    color-mix(in srgb, var(--color-accent) 35%, transparent);
+  --focus-ring: 1px solid var(--color-accent);
+  --focus-ring-offset: 1px;
+
+  --radius-dialog: 6px;
+  --color-dialog-border: rgba(35, 38, 41, 0.24);
+  --color-dialog-footer: transparent;
+  --color-dialog-footer-border: var(--color-separator);
+  --shadow-dialog: 0 4px 18px rgba(0, 0, 0, 0.2);
+  --font-size-title: calc(var(--font-size-base) * 1.25);
+  --font-weight-title: 500;
+
+  --color-menu-bg: #ffffff;
+  --radius-menu: 6px;
+  --radius-menu-item: 3px;
+  --menu-item-height: 28px;
+
+  @include dark {
+    --color-fg: #fcfcfc;
+    --color-fg-muted: #a1a9b1;
+    --color-chrome-fg: #a1a9b1;
+    --color-bg: #141618;
+    --color-chrome: #2a2e32;
+    --color-chrome-light: #202326;
+    --color-surface: #202326;
+    --color-separator: rgba(252, 252, 252, 0.1);
+    --color-border: rgba(252, 252, 252, 0.14);
+    --color-border-strong: rgba(252, 252, 252, 0.18);
+
+    --color-accent-text: var(--color-accent);
+
+    --color-highlight-bg: color-mix(
+      in srgb,
+      var(--color-accent) 28%,
+      transparent
+    );
+    --color-selected-bg: color-mix(
+      in srgb,
+      var(--color-accent) 18%,
+      transparent
+    );
+    --color-cursor-bg: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    --color-cursor-inactive: rgba(252, 252, 252, 0.08);
+
+    --color-destructive-text: #ed6a75;
+
+    --color-control-bg: #292c30;
+    --color-control-hover-bg: #292c30;
+    --color-control-active-bg: color-mix(
+      in srgb,
+      var(--color-accent) 30%,
+      #292c30
+    );
+    --color-control-border: rgba(252, 252, 252, 0.16);
+    --color-control-border-bottom: rgba(252, 252, 252, 0.12);
+    --control-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+
+    --color-suggested-bg: color-mix(in srgb, var(--color-accent) 25%, #292c30);
+    --color-suggested-hover-bg: color-mix(
+      in srgb,
+      var(--color-accent) 33%,
+      #292c30
+    );
+    --color-suggested-active-bg: color-mix(
+      in srgb,
+      var(--color-accent) 42%,
+      #292c30
+    );
+
+    --color-input-bg: #141618;
+    --color-input-border: rgba(252, 252, 252, 0.16);
+
+    --color-dialog-border: rgba(252, 252, 252, 0.16);
+    --shadow-dialog: 0 4px 18px rgba(0, 0, 0, 0.45);
+
+    --color-menu-bg: #292c30;
+  }
+}

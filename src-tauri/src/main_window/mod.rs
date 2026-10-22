@@ -2489,10 +2489,10 @@ pub fn spawn_main_window(
         None
     };
 
-    let mut builder = crate::confine_webview(
+    let mut builder = crate::appearance::window_chrome(crate::confine_webview(
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into())),
         app_handle,
-    )
+    ))
     .title(&launch.title)
     .resizable(true)
     .min_inner_size(crate::MIN_WINDOW_SIZE.0, crate::MIN_WINDOW_SIZE.1)

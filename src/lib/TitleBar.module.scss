@@ -1,0 +1,9 @@
+.titleBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
+  background: var(--color-titlebar);
+  z-index: 1;
+}

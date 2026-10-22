@@ -32,6 +32,9 @@
 
 .filename-part {
   display: inline;
+  // Status and marking set `--name-color` rather than the colour, so the
+  // cursor can keep it (see `--color-cursor-name`).
+  color: var(--name-color, currentColor);
   // A right-to-left name keeps to itself, never reordering what follows.
   unicode-bidi: isolate;
 }
@@ -44,24 +47,24 @@
 // from the git enricher's per-entry status). Untracked/added/renamed
 // share the "new" green; ignored entries dim like hidden files.
 .git-modified .filename-part {
-  color: var(--color-git-modified);
+  --name-color: var(--color-git-modified);
 }
 
 .git-untracked .filename-part,
 .git-added .filename-part,
 .git-renamed .filename-part {
-  color: var(--color-git-added);
+  --name-color: var(--color-git-added);
 }
 
 .git-conflicted .filename-part {
-  color: var(--color-git-conflicted);
+  --name-color: var(--color-git-conflicted);
 }
 
 .git-ignored {
   opacity: 0.7;
 
   .filename-part {
-    color: var(--color-fg-muted);
+    --name-color: var(--color-fg-muted);
   }
 }
 

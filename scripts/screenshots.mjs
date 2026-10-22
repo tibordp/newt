@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Capture the scenes in docs/scenes/library as PNGs in macOS window chrome.
+// Capture the scenes in docs/scenes/library as PNGs in window chrome.
 // See docs/scenes/README.md.
 //
-//   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark] [--jobs N]
+//   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark]
+//     [--platform macos|windows|gnome|kde] [--jobs N]
 //
 // Needs Playwright's WebKit once: `npx playwright install webkit`.
 
@@ -28,6 +29,7 @@ const { values: opts, positionals: only } = parseArgs({
   options: {
     out: { type: "string", default: defaultOut },
     scheme: { type: "string" },
+    platform: { type: "string", default: "macos" },
     jobs: { type: "string" },
   },
 });
@@ -84,9 +86,10 @@ try {
     if (only.length && !only.includes(name)) continue;
     for (const scheme of schemes) {
       if (opts.scheme && scheme !== opts.scheme) continue;
+      const platform = opts.platform === "macos" ? "" : `-${opts.platform}`;
       const out = join(
         opts.out,
-        `${name}${scheme === "dark" ? "-dark" : ""}.png`,
+        `${name}${platform}${scheme === "dark" ? "-dark" : ""}.png`,
       );
       jobs.push({ name, scheme, out });
     }
@@ -108,6 +111,7 @@ try {
           if (
             name === hero.name &&
             scheme === hero.scheme &&
+            opts.platform === "macos" &&
             resolve(opts.out) === defaultOut
           ) {
             copyFileSync(out, heroPath);
@@ -142,8 +146,11 @@ async function capture(name, scheme, out) {
     page.on("pageerror", (e) => console.error(`  ${name}: ${e.message}`));
     await page.clock.setFixedTime(new Date("2026-07-28T17:35:00+02:00"));
     await page.goto(
-      new URL(`docs/scenes/frame.html?scene=${encodeURIComponent(name)}`, base)
-        .href,
+      new URL(
+        `docs/scenes/frame.html?scene=${encodeURIComponent(name)}` +
+          `&platform=${encodeURIComponent(opts.platform)}`,
+        base,
+      ).href,
     );
     const app = await (await page.waitForSelector("iframe")).contentFrame();
     await app.waitForFunction(() => window.__scene);

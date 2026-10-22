@@ -100,7 +100,7 @@
   display: flex;
   cursor: default;
   width: fit-content;
-  padding: 0 20px 0 3px;
+  padding: 0 20px 0 var(--row-padding-start);
   font-size: var(--font-size-sm);
 }
 
@@ -158,15 +158,14 @@
   display: flex;
   width: fit-content;
   height: var(--row-height);
-  padding: 0 20px 0 3px;
+  padding: 0 20px 0 var(--row-padding-start);
 
-  // Row highlights are inset from the pane's edges.
   &::before {
     content: "";
     position: absolute;
-    inset: 0 var(--space-1);
+    inset: 0 var(--row-inset);
     z-index: -1;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-row);
   }
 
   &.selected {
@@ -174,12 +173,10 @@
       background: var(--color-selected-bg);
     }
 
-    // Selection always beats per-row enricher decorations: the git
-    // status classes color .filename-part directly, which would
-    // otherwise override the selection color. Three classes of
-    // specificity vs. their two.
+    // Selection always beats per-row enricher decorations: three classes
+    // of specificity against the git status classes' two.
     :global(.filename-part) {
-      color: var(--color-accent);
+      --name-color: var(--color-selected-fg);
     }
     @include fc.selected;
   }
@@ -214,16 +211,37 @@
   }
 
   :global(:root:not([data-window-inactive])) &.focused {
-    color: var(--color-accent-fg);
+    color: var(--color-cursor-fg);
 
     &::before {
+      background: var(--color-cursor-bg);
+      box-shadow: var(--cursor-ring);
+    }
+
+    &::after {
+      content: "";
+      position: absolute;
+      left: var(--row-inset);
+      top: 25%;
+      bottom: 25%;
+      width: var(--cursor-pill-width);
+      border-radius: var(--cursor-pill-width);
       background: var(--color-accent);
     }
 
-    // Type colors would vanish into the accent fill.
-    :global(.filename-part),
+    &.selected::before {
+      background:
+        linear-gradient(var(--color-cursor-bg), var(--color-cursor-bg)),
+        var(--color-selected-bg);
+    }
+
+    // On a fill, type colors would vanish into it.
+    :global(.filename-part) {
+      color: var(--color-cursor-name, var(--name-color, currentColor));
+    }
+
     :global(.file-icon) {
-      color: var(--color-accent-fg);
+      color: var(--color-cursor-icon, var(--icon-color));
     }
   }
 
@@ -271,6 +289,7 @@
     &:focus {
       outline: none;
       border: none;
+      box-shadow: none;
     }
   }
 }

@@ -125,6 +125,9 @@ async zoom(factor: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getSystemAppearance() : Promise<SystemAppearance> {
+    return await TAURI_INVOKE("get_system_appearance");
+},
 async cancel(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel", { paneHandle }) };
@@ -4094,6 +4097,7 @@ context_badges: ContextBadge[];
  * enricher id.
  */
 enrichment_activity: Partial<{ [key in string]: string }> }
+export type PlatformStyle = "macos" | "windows" | "gnome" | "kde"
 export type PropertyField = { 
 /**
  * Stable key (e.g. `s3.meta`) — patch target and i18n/docs anchor.
@@ -4485,6 +4489,19 @@ export type Symlink =
  * empty target — what needs the target fails on the entry instead.
  */
 "unknown"
+export type SystemAppearance = { platform: PlatformStyle; 
+/**
+ * `#rrggbb`.
+ */
+accent: string | null; font_family: string | null; 
+/**
+ * In CSS pixels.
+ */
+font_size: number | null; 
+/**
+ * The title bar the window's content is drawn under, in CSS pixels.
+ */
+titlebar_height: number | null }
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 

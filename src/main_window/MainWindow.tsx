@@ -45,6 +45,7 @@ import ModalRouter from "./modals/ModalRouter";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
 import { KEYBOARD_MENU_EVENT, MainWindowState, OperationState } from "./types";
 import Pane from "./Pane";
+import { useRowHeight } from "./density";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
 import { useRuntimeState } from "../lib/runtimeState";
@@ -173,10 +174,13 @@ function App() {
     }
   }, []);
 
-  const density = preferences?.settings.appearance?.density;
+  const rowHeight = useRowHeight(preferences?.settings.appearance?.density);
   useEffect(() => {
-    document.documentElement.dataset.density = density ?? "comfortable";
-  }, [density]);
+    document.documentElement.style.setProperty(
+      "--row-height",
+      `${rowHeight}px`,
+    );
+  }, [rowHeight]);
 
   useFocusWatchdog();
 

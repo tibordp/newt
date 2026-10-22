@@ -32,7 +32,6 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts â†
 
 ## UI reviews
 
-- A platform token layer (`:root[data-platform=â€¦]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
 - Rethink how background operations are presented. The panel at the bottom of the main window was the quickest way to get them working, not a considered design: where running, finished and failed operations live, how a prompt waiting on the user gets noticed, and what stays on screen once they're done.
 
 ## Viewer and editor follow-ups

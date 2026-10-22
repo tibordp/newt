@@ -23,18 +23,18 @@
     }
 
     &[data-selected="true"] {
-      background: var(--color-accent);
-      color: var(--color-accent-fg);
+      background: var(--color-highlight-bg);
+      color: var(--color-highlight-fg);
 
       .path,
       .unmountedTag {
-        color: var(--color-accent-fg);
+        color: inherit;
         opacity: 0.7;
       }
 
       .deleteBtn,
       .editBtn {
-        color: var(--color-accent-fg);
+        color: inherit;
         opacity: 0.7;
         &:hover {
           opacity: 1;
@@ -175,19 +175,19 @@
 
 .confirmYes {
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.25);
+  background: color-mix(in srgb, currentColor 25%, transparent);
   color: inherit;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.4);
+    background: color-mix(in srgb, currentColor 40%, transparent);
   }
 }
 
 .confirmNo {
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, currentColor 10%, transparent);
   color: inherit;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: color-mix(in srgb, currentColor 20%, transparent);
   }
 }

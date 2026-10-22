@@ -1,4 +1,5 @@
-/* macOS 26 window chrome, measured off a native capture. */
+/* Window chrome: macOS 26 measured off a native capture, the others
+   after their systems' default decorations. */
 
 :root {
   color-scheme: light dark;
@@ -41,7 +42,7 @@ body {
 .window {
   position: relative;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: var(--window-radius);
   background: var(--titlebar);
   box-shadow:
     0 0 0 0.5px var(--rim),
@@ -63,42 +64,206 @@ body {
 .titlebar {
   display: flex;
   align-items: center;
-  height: 32px;
+  height: var(--titlebar-height);
   cursor: default;
   user-select: none;
 }
 
-.lights {
+.title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--title);
+}
+
+.lights,
+.controls {
+  display: none;
+}
+
+/* macOS 26: the title bar overlays the app, which draws the strip under
+   it; the lights and title lead. */
+.window.macos {
+  --window-radius: 16px;
+  --titlebar-height: 32px;
+}
+
+.macos .titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.macos .lights {
   display: flex;
   gap: 9px;
   margin-left: 9px;
 }
 
-.lights i {
+.macos .lights i {
   width: 14px;
   height: 14px;
   border-radius: 50%;
   box-shadow: inset 0 0 0 0.5px var(--light-edge);
 }
 
-.lights i:nth-child(1) {
+.macos .lights i:nth-child(1) {
   background: #ff5c5f;
 }
-.lights i:nth-child(2) {
+.macos .lights i:nth-child(2) {
   background: #fac800;
 }
-.lights i:nth-child(3) {
+.macos .lights i:nth-child(3) {
   background: #34c759;
 }
 
-.title {
+.macos .title {
   margin-left: 16px;
-  font-size: 13px;
   font-weight: 700;
+}
+
+/* Windows 11: Mica title bar, the title leading, caption buttons
+   trailing. */
+.window.windows {
+  --window-radius: 8px;
+  --titlebar-height: 32px;
+  --titlebar: #f3f3f3;
+  --title: #1b1b1b;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.windows .title {
+  margin-left: 14px;
+  font-size: 12px;
+  flex: 1;
+}
+
+.windows .controls {
+  display: flex;
+  align-self: stretch;
+}
+
+.windows .controls i {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 13px;
   color: var(--title);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.windows .controls i:nth-child(1)::before {
+  content: "\2500";
+}
+.windows .controls i:nth-child(2)::before {
+  content: "\25A1";
+}
+.windows .controls i:nth-child(3)::before {
+  content: "\2715";
+}
+
+/* GNOME: a GTK title bar, the title centred and bold, a round close
+   button trailing. */
+.window.gnome {
+  --window-radius: 12px;
+  --titlebar-height: 46px;
+  --titlebar: #ebebed;
+  --title: #2e2e33;
+  font-family: "Adwaita Sans", Cantarell, system-ui, sans-serif;
+}
+
+.gnome .title,
+.kde .title {
+  flex: 1;
+  text-align: center;
+  padding-left: 40px;
+}
+
+.gnome .title {
+  font-size: 14.67px;
+  font-weight: 700;
+}
+
+.gnome .controls,
+.kde .controls {
+  display: flex;
+  gap: 6px;
+  margin-right: 9px;
+}
+
+.gnome .controls i,
+.kde .controls i {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-style: normal;
+  color: var(--title);
+}
+
+.gnome .controls i {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  background: rgb(0 0 6 / 0.1);
+}
+
+.gnome .controls i::before {
+  content: "\2715";
+}
+
+/* KDE Plasma: a Breeze title bar in the header colour, the title centred,
+   minimize, maximize and close trailing. */
+.window.kde {
+  --window-radius: 5px;
+  --titlebar-height: 30px;
+  --titlebar: #dee0e2;
+  --title: #232629;
+  font-family: "Noto Sans", system-ui, sans-serif;
+}
+
+.kde .title {
+  font-size: 13.33px;
+}
+
+.kde .controls i {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.kde .controls i:nth-child(1)::before {
+  content: "\2304";
+}
+.kde .controls i:nth-child(2)::before {
+  content: "\2303";
+}
+.kde .controls i:nth-child(3)::before {
+  content: "\2715";
+}
+
+@media (prefers-color-scheme: dark) {
+  .window.windows {
+    --titlebar: #202020;
+    --title: #ffffff;
+  }
+
+  .window.gnome {
+    --titlebar: #2e2e32;
+    --title: #ffffff;
+  }
+
+  .gnome .controls i {
+    background: rgb(255 255 255 / 0.1);
+  }
+
+  .window.kde {
+    --titlebar: #2a2e32;
+    --title: #fcfcfc;
+  }
 }
 
 .window iframe {

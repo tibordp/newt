@@ -216,6 +216,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             window::destroy_window,
             window::set_window_title,
             window::zoom,
+            crate::appearance::get_system_appearance,
             // Pane interaction (called directly by frontend components)
             pane::cancel,
             pane::navigate,

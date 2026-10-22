@@ -22,18 +22,18 @@
     }
 
     &[data-selected="true"] {
-      background: var(--color-accent);
-      color: var(--color-accent-fg);
+      background: var(--color-highlight-bg);
+      color: var(--color-highlight-fg);
 
       .shortcut kbd {
-        color: var(--color-accent-fg);
-        background: rgba(255, 255, 255, 0.2);
+        color: inherit;
+        background: color-mix(in srgb, currentColor 20%, transparent);
         box-shadow: none;
       }
 
       .badge {
-        color: var(--color-accent-fg);
-        background: rgba(255, 255, 255, 0.2);
+        color: inherit;
+        background: color-mix(in srgb, currentColor 20%, transparent);
       }
       @include fc.selected;
     }

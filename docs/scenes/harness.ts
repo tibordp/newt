@@ -11,8 +11,10 @@ import type {
   InspectedFile,
   MainWindowState,
   MarkdownNode,
+  PlatformStyle,
   ResolvedPreferences,
   RuntimeState,
+  SystemAppearance,
   VfsPath,
   TableDelimiter,
   ViewerMode,
@@ -67,8 +69,22 @@ const fail = (message: string): never => {
   throw new Error(message);
 };
 
-const name = new URLSearchParams(location.search).get("scene") ?? "";
+const params = new URLSearchParams(location.search);
+const name = params.get("scene") ?? "";
 const scene = scenes[name] ?? fail(`no scene named "${name}"`);
+
+/// What Rust would hand the window (`appearance.rs`): the platform the
+/// frame draws, with its default accent and font. macOS 26's title bar is
+/// the one `frame.ts` draws over the app.
+const platform = (params.get("platform") ?? "macos") as PlatformStyle;
+const appearance: SystemAppearance = {
+  platform,
+  accent: null,
+  font_family: null,
+  font_size: null,
+  titlebar_height: platform === "macos" ? 32 : null,
+};
+window.__NEWT_APPEARANCE__ = appearance;
 const readySelectors = [READY[scene.window], scene.ready].filter(
   (s): s is string => !!s,
 );
@@ -181,6 +197,8 @@ const handlers: Record<string, (args: any) => unknown> = {
   },
   get_preferences: () => preferences,
   get_runtime_state: () => runtimeState,
+  get_system_appearance: () => appearance,
+  "plugin:window|is_fullscreen": () => false,
   file_info: ({ path }: { path: VfsPath }) => infoOf(path),
   inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
     const { mime, viewerMode } = fixture(path);
