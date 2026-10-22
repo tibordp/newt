@@ -2512,6 +2512,7 @@ pub fn spawn_main_window(
     };
     let window = builder.build()?;
     crate::tune_webview_settings(&window);
+    crate::appearance::window_built(&window, true);
 
     let ctx = MainWindowContext::new(window.clone(), launch, prefs_handle.clone());
     // A window opened maximized reports no normal bounds until un-maximized.

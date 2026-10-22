@@ -88,6 +88,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+windows-version = "0.1"
 # Versions pinned to match wry's WebView2 bindings so the controller handed
 # to `WebviewWindow::with_webview` casts to our interface cleanly.
 webview2-com = "0.39"

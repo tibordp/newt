@@ -166,53 +166,16 @@ body {
   content: "\2715";
 }
 
-/* GNOME: a GTK title bar, the title centred and bold, a round close
-   button trailing. */
+/* GNOME: GTK draws the frame — rounded corners, a shadow — and the app its
+   own header bar. */
 .window.gnome {
   --window-radius: 12px;
-  --titlebar-height: 46px;
-  --titlebar: #ebebed;
-  --title: #2e2e33;
-  font-family: "Adwaita Sans", Cantarell, system-ui, sans-serif;
+  --titlebar-height: 0px;
+  --titlebar: #ffffff;
 }
 
-.gnome .title,
-.kde .title {
-  flex: 1;
-  text-align: center;
-  padding-left: 40px;
-}
-
-.gnome .title {
-  font-size: 14.67px;
-  font-weight: 700;
-}
-
-.gnome .controls,
-.kde .controls {
-  display: flex;
-  gap: 6px;
-  margin-right: 9px;
-}
-
-.gnome .controls i,
-.kde .controls i {
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  font-style: normal;
-  color: var(--title);
-}
-
-.gnome .controls i {
-  width: 24px;
-  height: 24px;
-  font-size: 11px;
-  background: rgb(0 0 6 / 0.1);
-}
-
-.gnome .controls i::before {
-  content: "\2715";
+.gnome .titlebar {
+  display: none;
 }
 
 /* KDE Plasma: a Breeze title bar in the header colour, the title centred,
@@ -226,13 +189,27 @@ body {
 }
 
 .kde .title {
+  flex: 1;
+  text-align: center;
+  padding-left: 40px;
   font-size: 13.33px;
 }
 
+.kde .controls {
+  display: flex;
+  gap: 6px;
+  margin-right: 9px;
+}
+
 .kde .controls i {
+  display: grid;
+  place-items: center;
   width: 18px;
   height: 18px;
+  border-radius: 50%;
   font-size: 11px;
+  font-style: normal;
+  color: var(--title);
 }
 
 .kde .controls i:nth-child(1)::before {
@@ -253,11 +230,6 @@ body {
 
   .window.gnome {
     --titlebar: #2e2e32;
-    --title: #ffffff;
-  }
-
-  .gnome .controls i {
-    background: rgb(255 255 255 / 0.1);
   }
 
   .window.kde {

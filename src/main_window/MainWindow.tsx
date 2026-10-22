@@ -52,6 +52,7 @@ import { useRuntimeState } from "../lib/runtimeState";
 import CommandBar from "./CommandBar";
 import { useFocusWatchdog } from "./focusWatchdog";
 import { isKeyboardContextMenu } from "../lib/menus";
+import { registerCommandRunner, setWindowTitle } from "../lib/TitleBar";
 
 enablePatches();
 
@@ -184,23 +185,6 @@ function App() {
 
   useFocusWatchdog();
 
-  // While another window has the keyboard, focus marks (the cursor, the
-  // active pane's dot, the terminal tab's line) turn grey.
-  useEffect(() => {
-    const root = document.documentElement;
-    const update = () => {
-      if (document.hasFocus()) delete root.dataset.windowInactive;
-      else root.dataset.windowInactive = "";
-    };
-    update();
-    window.addEventListener("focus", update);
-    window.addEventListener("blur", update);
-    return () => {
-      window.removeEventListener("focus", update);
-      window.removeEventListener("blur", update);
-    };
-  }, []);
-
   // Asking whether to close the window takes precedence over the progress
   // of the operations it's asking about.
   const foregroundOp =
@@ -242,10 +226,21 @@ function App() {
     crumb && [crumb.label, crumb.note?.text].filter(Boolean).join(" ");
   useEffect(() => {
     if (baseTitle === undefined) return;
-    safeSilent(
-      commands.setWindowTitle(here ? `${here} - ${baseTitle}` : baseTitle),
-    );
+    setWindowTitle(here ? `${here} - ${baseTitle}` : baseTitle);
   }, [here, baseTitle]);
+
+  // The header bar's primary menu (GNOME) runs commands as a binding would.
+  const commandContext = useRef({ remoteState, preferences });
+  commandContext.current = { remoteState, preferences };
+  useEffect(() => {
+    registerCommandRunner((id) => {
+      const { remoteState, preferences } = commandContext.current;
+      if (remoteState && preferences) {
+        executeCommandById(id, remoteState, preferences);
+      }
+    });
+    return () => registerCommandRunner(null);
+  }, []);
 
   // Quick View follows the active pane's focused row, once it stops moving.
   const previewPane = quickView

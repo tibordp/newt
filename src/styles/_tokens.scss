@@ -153,9 +153,21 @@
   --radius-menu-item: var(--radius-sm);
   --menu-item-height: 28px;
 
-  // The strip macOS draws the window's title and controls on.
+  // The title bar Newt draws: the strip under macOS's title and controls,
+  // GNOME's header bar. Backdrop is while another window has the keyboard.
   --titlebar-height: 0px;
   --color-titlebar: var(--color-chrome-light);
+  --color-titlebar-backdrop: var(--color-titlebar);
+
+  // Behind the content: the chrome is see-through where the window is
+  // (Mica), and content areas paint `--color-bg` themselves.
+  --color-window-bg: var(--color-bg);
+
+  // Terminal tabs
+  --radius-tab: 0;
+  --tab-margin: 0;
+  --color-tab-separator: var(--color-separator);
+  --color-tab-active-bg: var(--color-bg);
 
   // Drag rect
   --color-drag-rect-bg: var(--_drag-rect-bg);

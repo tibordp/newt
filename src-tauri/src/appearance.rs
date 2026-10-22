@@ -1,6 +1,7 @@
 //! The parts of the platform's own look the frontend's token layer follows:
-//! which design language, the system accent colour and UI font, and on macOS
-//! the height of the title bar the content extends under.
+//! which design language, the system accent colour and UI font, KDE's colour
+//! scheme, and the window chrome — macOS's title bar the content extends
+//! under, the header bar Newt draws itself on GNOME, Mica on Windows 11.
 //!
 //! Every window is built with the current values as an initialization
 //! script, so its first paint already has them; the frontend asks again
@@ -18,16 +19,56 @@ pub enum PlatformStyle {
     Kde,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// The window buttons on either side of a header bar, in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
+pub struct WindowButtons {
+    pub start: Vec<WindowButton>,
+    pub end: Vec<WindowButton>,
+}
+
+/// KDE's colour scheme, each colour `#rrggbb` where the scheme sets it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, specta::Type)]
+pub struct ColorScheme {
+    /// Whether the scheme is a dark one, judged by its window colour.
+    pub dark: bool,
+    pub window_bg: Option<String>,
+    pub window_fg: Option<String>,
+    pub window_fg_inactive: Option<String>,
+    pub view_bg: Option<String>,
+    pub view_fg: Option<String>,
+    pub header_bg: Option<String>,
+    /// While the window doesn't have the keyboard.
+    pub header_bg_inactive: Option<String>,
+    pub header_fg: Option<String>,
+    pub button_bg: Option<String>,
+    pub button_fg: Option<String>,
+    pub selection_fg: Option<String>,
+    pub focus: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct SystemAppearance {
     pub platform: PlatformStyle,
     /// `#rrggbb`.
     pub accent: Option<String>,
     pub font_family: Option<String>,
-    /// In CSS pixels.
-    pub font_size: Option<f64>,
+    /// The UI font's size, in points.
+    pub font_points: Option<f64>,
     /// The title bar the window's content is drawn under, in CSS pixels.
     pub titlebar_height: Option<f64>,
+    /// The window buttons of the header bar Newt draws itself.
+    pub window_buttons: Option<WindowButtons>,
+    pub color_scheme: Option<ColorScheme>,
+    /// Mica shows through the window's chrome.
+    pub mica: bool,
 }
 
 pub fn system_appearance() -> SystemAppearance {
@@ -40,14 +81,66 @@ pub(crate) fn initialization_script() -> String {
 }
 
 /// Applies the platform's window chrome and the appearance script to a
-/// window being built.
+/// window being built. A window built through this must be handed to
+/// [`window_built`] afterwards, which shows it.
 pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, M>,
 ) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, M> {
     let builder = builder.initialization_script(initialization_script());
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+    #[cfg(windows)]
+    let builder = if platform::mica() {
+        builder
+            .transparent(true)
+            .effects(tauri::utils::config::WindowEffectsConfig {
+                effects: vec![tauri::window::Effect::Mica],
+                ..Default::default()
+            })
+    } else {
+        builder
+    };
+    // GTK takes a window's title bar only before it is first shown.
+    #[cfg(target_os = "linux")]
+    let builder = if platform::is_gnome() {
+        builder.visible(false)
+    } else {
+        builder
+    };
     builder
+}
+
+/// Finishes a window built with [`window_chrome`]: on GNOME, GTK keeps the
+/// window's frame — shadow, rounded corners, resize edges — but draws no
+/// title bar, Newt's header bar standing in for it. Shows the window if
+/// `visible`.
+pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
+    #[cfg(target_os = "linux")]
+    if platform::is_gnome() {
+        let target = window.clone();
+        let result = window.run_on_main_thread(move || {
+            use gtk::prelude::{GtkWindowExt, WidgetExt};
+            match target.gtk_window() {
+                Ok(gtk_window) => {
+                    // An empty title bar: GTK draws its frame around the
+                    // webview and no title bar of its own.
+                    let titlebar = gtk::EventBox::new();
+                    titlebar.set_size_request(-1, 0);
+                    gtk_window.set_titlebar(Some(&titlebar));
+                }
+                Err(e) => log::warn!("no GTK window for the header bar: {e}"),
+            }
+            if visible {
+                let _ = target.show();
+                let _ = target.set_focus();
+            }
+        });
+        if let Err(e) = result {
+            log::warn!("could not set up the header bar: {e}");
+        }
+        return;
+    }
+    let _ = (window, visible);
 }
 
 /// Records what can only be read on the main thread; called from `setup`.
@@ -65,12 +158,6 @@ pub fn get_system_appearance() -> SystemAppearance {
 fn hex(r: f64, g: f64, b: f64) -> String {
     let c = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("#{:02x}{:02x}{:02x}", c(r), c(g), c(b))
-}
-
-/// Points to CSS pixels.
-#[cfg(any(target_os = "linux", test))]
-fn pt_to_px(pt: f64) -> f64 {
-    pt * 96.0 / 72.0
 }
 
 #[cfg(target_os = "macos")]
@@ -101,8 +188,11 @@ mod platform {
             platform: PlatformStyle::Macos,
             accent,
             font_family: None,
-            font_size: None,
+            font_points: None,
             titlebar_height: TITLEBAR_HEIGHT.get().copied(),
+            window_buttons: None,
+            color_scheme: None,
+            mica: false,
         }
     }
 }
@@ -113,6 +203,12 @@ mod platform {
 
     use super::{PlatformStyle, SystemAppearance, hex};
 
+    /// Mica arrived with Windows 11; earlier, a transparent window would
+    /// show the desktop through its chrome.
+    pub(super) fn mica() -> bool {
+        windows_version::OsVersion::current().build >= 22000
+    }
+
     pub(super) fn read() -> SystemAppearance {
         let accent = UISettings::new()
             .and_then(|s| s.GetColorValue(UIColorType::Accent))
@@ -122,8 +218,11 @@ mod platform {
             platform: PlatformStyle::Windows,
             accent,
             font_family: None,
-            font_size: None,
+            font_points: None,
             titlebar_height: None,
+            window_buttons: None,
+            color_scheme: None,
+            mica: mica(),
         }
     }
 }
@@ -136,29 +235,80 @@ mod platform {
 
     use super::{PlatformStyle, SystemAppearance, kde};
 
+    /// KDE by `XDG_CURRENT_DESKTOP`; every other desktop gets the GNOME look.
+    pub(super) fn is_gnome() -> bool {
+        !std::env::var("XDG_CURRENT_DESKTOP")
+            .is_ok_and(|v| v.split(':').any(|d| d.eq_ignore_ascii_case("kde")))
+    }
+
     pub(super) fn read() -> SystemAppearance {
-        let is_kde = std::env::var("XDG_CURRENT_DESKTOP")
-            .is_ok_and(|v| v.split(':').any(|d| d.eq_ignore_ascii_case("kde")));
-        if is_kde {
+        if is_gnome() {
+            let interface = settings("org.gnome.desktop.interface");
+            let accent = interface
+                .as_ref()
+                .and_then(|s| string(s, "accent-color"))
+                .and_then(|name| super::libadwaita_accent(&name))
+                .map(str::to_owned);
+            let font = interface
+                .as_ref()
+                .and_then(|s| string(s, "font-name"))
+                .and_then(|name| pango_font(&name));
+            let buttons = settings("org.gnome.desktop.wm.preferences")
+                .and_then(|s| string(&s, "button-layout"))
+                .map(|layout| super::button_layout(&layout))
+                .unwrap_or_else(super::default_buttons);
+            SystemAppearance {
+                platform: PlatformStyle::Gnome,
+                accent,
+                font_family: font.as_ref().map(|f| f.0.clone()),
+                font_points: font.map(|f| f.1),
+                titlebar_height: None,
+                window_buttons: Some(buttons),
+                color_scheme: None,
+                mica: false,
+            }
+        } else {
             let globals = kdeglobals().and_then(|p| std::fs::read_to_string(p).ok());
             let globals = globals.as_deref().map(kde::parse).unwrap_or_default();
             SystemAppearance {
                 platform: PlatformStyle::Kde,
                 accent: globals.accent,
                 font_family: globals.font.as_ref().map(|f| f.0.clone()),
-                font_size: globals.font.map(|f| f.1),
+                font_points: globals.font.map(|f| f.1),
                 titlebar_height: None,
-            }
-        } else {
-            let (accent, font) = gnome();
-            SystemAppearance {
-                platform: PlatformStyle::Gnome,
-                accent,
-                font_family: font.as_ref().map(|f| f.0.clone()),
-                font_size: font.map(|f| f.1),
-                titlebar_height: None,
+                window_buttons: None,
+                color_scheme: globals.scheme,
+                mica: false,
             }
         }
+    }
+
+    /// The settings, if the schema is installed.
+    fn settings(schema: &str) -> Option<(gio::Settings, gio::SettingsSchema)> {
+        let source = gio::SettingsSchemaSource::default()?.lookup(schema, true)?;
+        Some((gio::Settings::new(schema), source))
+    }
+
+    fn string(
+        (settings, schema): &(gio::Settings, gio::SettingsSchema),
+        key: &str,
+    ) -> Option<String> {
+        schema
+            .has_key(key)
+            .then(|| settings.string(key).to_string())
+    }
+
+    /// A Pango font description's family and size in points.
+    fn pango_font(description: &str) -> Option<(String, f64)> {
+        let desc = gtk::pango::FontDescription::from_string(description);
+        let family = desc.family()?.to_string();
+        let size = desc.size() as f64 / gtk::pango::SCALE as f64;
+        let points = if desc.is_size_absolute() {
+            size * 72.0 / 96.0
+        } else {
+            size
+        };
+        (points > 0.0).then_some((family, points))
     }
 
     fn kdeglobals() -> Option<PathBuf> {
@@ -166,37 +316,6 @@ mod platform {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
         Some(config.join("kdeglobals"))
-    }
-
-    /// `org.gnome.desktop.interface`: `accent-color` (GNOME 47+) names one
-    /// of libadwaita's accents; `font-name` is a Pango description.
-    fn gnome() -> (Option<String>, Option<(String, f64)>) {
-        const SCHEMA: &str = "org.gnome.desktop.interface";
-        let Some(schema) =
-            gio::SettingsSchemaSource::default().and_then(|s| s.lookup(SCHEMA, true))
-        else {
-            return (None, None);
-        };
-        let settings = gio::Settings::new(SCHEMA);
-        let accent = schema
-            .has_key("accent-color")
-            .then(|| settings.string("accent-color"))
-            .and_then(|name| super::libadwaita_accent(&name))
-            .map(str::to_owned);
-        let font = schema
-            .has_key("font-name")
-            .then(|| gtk::pango::FontDescription::from_string(&settings.string("font-name")))
-            .and_then(|desc| {
-                let family = desc.family()?.to_string();
-                let size = desc.size() as f64 / gtk::pango::SCALE as f64;
-                let px = if desc.is_size_absolute() {
-                    size
-                } else {
-                    super::pt_to_px(size)
-                };
-                (size > 0.0).then_some((family, px))
-            });
-        (accent, font)
     }
 }
 
@@ -217,23 +336,58 @@ fn libadwaita_accent(name: &str) -> Option<&'static str> {
     })
 }
 
+/// GNOME's default `button-layout`.
+#[cfg(any(target_os = "linux", test))]
+fn default_buttons() -> WindowButtons {
+    button_layout("appmenu:close")
+}
+
+/// `org.gnome.desktop.wm.preferences button-layout`: the buttons leading
+/// and trailing, separated by a colon. Names other than the three buttons
+/// (`appmenu`, `icon`, `spacer`) have nothing to stand for here.
+#[cfg(any(target_os = "linux", test))]
+fn button_layout(layout: &str) -> WindowButtons {
+    let side = |names: &str| {
+        names
+            .split(',')
+            .filter_map(|name| match name.trim() {
+                "minimize" => Some(WindowButton::Minimize),
+                "maximize" => Some(WindowButton::Maximize),
+                "close" => Some(WindowButton::Close),
+                _ => None,
+            })
+            .collect()
+    };
+    let (start, end) = layout.split_once(':').unwrap_or(("", layout));
+    WindowButtons {
+        start: side(start),
+        end: side(end),
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
 mod kde {
+    use super::ColorScheme;
+
     #[derive(Debug, Default, PartialEq)]
     pub(super) struct Globals {
         pub accent: Option<String>,
-        /// Family and size in CSS pixels.
+        /// Family and size in points.
         pub font: Option<(String, f64)>,
+        pub scheme: Option<ColorScheme>,
     }
 
     /// The accent is `[General] AccentColor`, or the colour scheme's
     /// selection colour when the accent follows the scheme; the font is
-    /// `[General] font`, a Qt font string (`family,pointSize,…`).
+    /// `[General] font`, a Qt font string (`family,pointSize,…`); the
+    /// scheme is the `[Colors:*]` groups.
     pub(super) fn parse(text: &str) -> Globals {
         let mut section = "";
         let mut accent = None;
         let mut selection = None;
         let mut font = None;
+        let mut scheme = ColorScheme::default();
+        let mut window_rgb = None;
         for line in text.lines() {
             let line = line.trim();
             if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
@@ -243,27 +397,50 @@ mod kde {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
+            let color = || rgb(value).map(|c| super::hex(c[0], c[1], c[2]));
             match (section, key.trim()) {
-                ("General", "AccentColor") => accent = rgb(value),
-                ("Colors:Selection", "BackgroundNormal") => selection = rgb(value),
+                ("General", "AccentColor") => accent = color(),
                 ("General", "font") => font = qt_font(value),
+                ("Colors:Selection", "BackgroundNormal") => selection = color(),
+                ("Colors:Selection", "ForegroundNormal") => scheme.selection_fg = color(),
+                ("Colors:Window", "BackgroundNormal") => {
+                    window_rgb = rgb(value);
+                    scheme.window_bg = color();
+                }
+                ("Colors:Window", "ForegroundNormal") => scheme.window_fg = color(),
+                ("Colors:Window", "ForegroundInactive") => scheme.window_fg_inactive = color(),
+                ("Colors:View", "BackgroundNormal") => scheme.view_bg = color(),
+                ("Colors:View", "ForegroundNormal") => scheme.view_fg = color(),
+                ("Colors:View", "DecorationFocus") => scheme.focus = color(),
+                ("Colors:Header", "BackgroundNormal") => scheme.header_bg = color(),
+                ("Colors:Header][Inactive", "BackgroundNormal") => {
+                    scheme.header_bg_inactive = color()
+                }
+                ("Colors:Header", "ForegroundNormal") => scheme.header_fg = color(),
+                ("Colors:Button", "BackgroundNormal") => scheme.button_bg = color(),
+                ("Colors:Button", "ForegroundNormal") => scheme.button_fg = color(),
                 _ => {}
             }
         }
+        let scheme = window_rgb.map(|[r, g, b]| ColorScheme {
+            dark: 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5,
+            ..scheme
+        });
         Globals {
             accent: accent.or(selection),
             font,
+            scheme,
         }
     }
 
-    fn rgb(value: &str) -> Option<String> {
+    fn rgb(value: &str) -> Option<[f64; 3]> {
         let parts: Vec<f64> = value
             .split(',')
             .map(|p| p.trim().parse::<f64>().map(|v| v / 255.0))
             .collect::<Result<_, _>>()
             .ok()?;
         match parts[..] {
-            [r, g, b] | [r, g, b, _] => Some(super::hex(r, g, b)),
+            [r, g, b] | [r, g, b, _] => Some([r, g, b]),
             _ => None,
         }
     }
@@ -271,8 +448,8 @@ mod kde {
     fn qt_font(value: &str) -> Option<(String, f64)> {
         let mut fields = value.split(',');
         let family = fields.next()?.trim();
-        let size: f64 = fields.next()?.trim().parse().ok()?;
-        (!family.is_empty() && size > 0.0).then(|| (family.to_owned(), super::pt_to_px(size)))
+        let points: f64 = fields.next()?.trim().parse().ok()?;
+        (!family.is_empty() && points > 0.0).then(|| (family.to_owned(), points))
     }
 }
 
@@ -281,21 +458,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn kdeglobals_accent_and_font() {
+    fn kdeglobals_accent_font_and_scheme() {
         let globals = kde::parse(
-            "[Colors:Selection]\nBackgroundNormal=61,174,233\n\n\
+            "[Colors:Header]\nBackgroundNormal=222,224,226\n\n\
+             [Colors:Header][Inactive]\nBackgroundNormal=239,240,241\n\n\
+             [Colors:Selection]\nBackgroundNormal=61,174,233\n\n\
+             [Colors:Window]\nBackgroundNormal=239,240,241\nForegroundNormal=35,38,41\n\n\
              [General]\nAccentColor=233,100,58\nfont=Noto Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\n",
         );
         assert_eq!(globals.accent.as_deref(), Some("#e9643a"));
-        let (family, px) = globals.font.unwrap();
-        assert_eq!(family, "Noto Sans");
-        assert!((px - 13.333).abs() < 0.01);
+        assert_eq!(globals.font, Some(("Noto Sans".into(), 10.0)));
+        let scheme = globals.scheme.unwrap();
+        assert!(!scheme.dark);
+        assert_eq!(scheme.header_bg.as_deref(), Some("#dee0e2"));
+        assert_eq!(scheme.header_bg_inactive.as_deref(), Some("#eff0f1"));
+        assert_eq!(scheme.window_fg.as_deref(), Some("#232629"));
+        assert_eq!(scheme.view_bg, None);
     }
 
     #[test]
     fn kdeglobals_accent_follows_the_scheme_without_its_own() {
-        let globals = kde::parse("[Colors:Selection]\nBackgroundNormal=61,174,233\n");
+        let globals = kde::parse(
+            "[Colors:Selection]\nBackgroundNormal=61,174,233\n\
+             [Colors:Window]\nBackgroundNormal=32,35,38\n",
+        );
         assert_eq!(globals.accent.as_deref(), Some("#3daee9"));
+        assert!(globals.scheme.unwrap().dark);
         assert_eq!(globals.font, None);
     }
 
@@ -303,5 +491,38 @@ mod tests {
     fn libadwaita_accent_names() {
         assert_eq!(libadwaita_accent("teal"), Some("#2190a4"));
         assert_eq!(libadwaita_accent("chartreuse"), None);
+    }
+
+    #[test]
+    fn gnome_button_layouts() {
+        use WindowButton::*;
+        assert_eq!(
+            default_buttons(),
+            WindowButtons {
+                start: vec![],
+                end: vec![Close],
+            }
+        );
+        assert_eq!(
+            button_layout("close,minimize,maximize:appmenu"),
+            WindowButtons {
+                start: vec![Close, Minimize, Maximize],
+                end: vec![],
+            }
+        );
+        assert_eq!(
+            button_layout(":minimize,maximize,close"),
+            WindowButtons {
+                start: vec![],
+                end: vec![Minimize, Maximize, Close],
+            }
+        );
+        assert_eq!(
+            button_layout("close"),
+            WindowButtons {
+                start: vec![],
+                end: vec![Close],
+            }
+        );
     }
 }

@@ -2564,6 +2564,18 @@ export type BrowseFormat = "zip" | "7z" |
  */
 "disc"
 /**
+ * KDE's colour scheme, each colour `#rrggbb` where the scheme sets it.
+ */
+export type ColorScheme = { 
+/**
+ * Whether the scheme is a dark one, judged by its window colour.
+ */
+dark: boolean; window_bg: string | null; window_fg: string | null; window_fg_inactive: string | null; view_bg: string | null; view_fg: string | null; header_bg: string | null; 
+/**
+ * While the window doesn't have the keyboard.
+ */
+header_bg_inactive: string | null; header_fg: string | null; button_bg: string | null; button_fg: string | null; selection_fg: string | null; focus: string | null }
+/**
  * Command metadata for the command palette.
  */
 export type CommandInfo = { id: string; name: string; short_name: string | null; category: string; 
@@ -4495,13 +4507,21 @@ export type SystemAppearance = { platform: PlatformStyle;
  */
 accent: string | null; font_family: string | null; 
 /**
- * In CSS pixels.
+ * The UI font's size, in points.
  */
-font_size: number | null; 
+font_points: number | null; 
 /**
  * The title bar the window's content is drawn under, in CSS pixels.
  */
-titlebar_height: number | null }
+titlebar_height: number | null; 
+/**
+ * The window buttons of the header bar Newt draws itself.
+ */
+window_buttons: WindowButtons | null; color_scheme: ColorScheme | null; 
+/**
+ * Mica shows through the window's chrome.
+ */
+mica: boolean }
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 
@@ -4754,6 +4774,11 @@ export type VolumeKind =
  * A phone or a camera, over MTP or PTP.
  */
 "Device" | "Unknown"
+export type WindowButton = "minimize" | "maximize" | "close"
+/**
+ * The window buttons on either side of a header bar, in order.
+ */
+export type WindowButtons = { start: WindowButton[]; end: WindowButton[] }
 /**
  * One installed WSL distribution. Serialized into the picker modal payload.
  */

@@ -17,6 +17,7 @@ import { REFOCUS_EVENT } from "./types";
 import { TerminalMenuContent } from "./TerminalMenus";
 import { normalizeKeyEvent } from "../lib/commands";
 import { usePreferences } from "../lib/preferences";
+import { useAppearance } from "../lib/appearance";
 
 /// Commands whose keys, typed in a terminal, go to Newt rather than the
 /// program: moving between the terminal and the panes, and between
@@ -81,11 +82,17 @@ const darkTheme: ITheme = {
 
 function getPreferredTheme(): ITheme {
   const dataTheme = document.documentElement.dataset.theme;
-  if (dataTheme === "dark") return darkTheme;
-  if (dataTheme === "light") return lightTheme;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? darkTheme
-    : lightTheme;
+  const dark =
+    dataTheme === "dark" ||
+    (dataTheme !== "light" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const base = dark ? darkTheme : lightTheme;
+  // The page's own colours, which follow the platform and KDE's scheme.
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string) => style.getPropertyValue(name).trim() || null;
+  const background = token("--color-bg") ?? base.background;
+  const foreground = token("--color-terminal-fg") ?? base.foreground;
+  return { ...base, background, foreground, cursor: foreground };
 }
 
 export default function Terminal({
@@ -114,6 +121,12 @@ export default function Terminal({
   const termDataContext = useContext(TerminalData);
   const preferences = usePreferences();
   const settings = preferences?.settings.terminal;
+  const appearance = useAppearance();
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = getPreferredTheme();
+    }
+  }, [appearance]);
   const escapeKeys = useMemo(
     () =>
       new Set(

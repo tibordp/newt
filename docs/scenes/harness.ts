@@ -73,16 +73,55 @@ const params = new URLSearchParams(location.search);
 const name = params.get("scene") ?? "";
 const scene = scenes[name] ?? fail(`no scene named "${name}"`);
 
-/// What Rust would hand the window (`appearance.rs`): the platform the
-/// frame draws, with its default accent and font. macOS 26's title bar is
-/// the one `frame.ts` draws over the app.
+/// Breeze's own colour schemes, as KDE's kdeglobals carries them.
+const BREEZE = {
+  light: {
+    dark: false,
+    window_bg: "#eff0f1",
+    window_fg: "#232629",
+    window_fg_inactive: "#707d8a",
+    view_bg: "#ffffff",
+    view_fg: "#232629",
+    header_bg: "#dee0e2",
+    header_bg_inactive: "#eff0f1",
+    header_fg: "#232629",
+    button_bg: "#fcfcfc",
+    button_fg: "#232629",
+    selection_fg: "#ffffff",
+    focus: "#3daee9",
+  },
+  dark: {
+    dark: true,
+    window_bg: "#202326",
+    window_fg: "#fcfcfc",
+    window_fg_inactive: "#a1a9b1",
+    view_bg: "#141618",
+    view_fg: "#fcfcfc",
+    header_bg: "#2a2e32",
+    header_bg_inactive: "#202326",
+    header_fg: "#fcfcfc",
+    button_bg: "#292c30",
+    button_fg: "#fcfcfc",
+    selection_fg: "#ffffff",
+    focus: "#3daee9",
+  },
+};
+
+/// What Rust would hand the window (`appearance.rs`) on the platform the
+/// frame draws, set up as it ships: default accent and font, GNOME's
+/// close-only button layout, Breeze in the scheme's own variant, Mica on.
+/// macOS 26's title bar is the one `frame.ts` draws over the app.
 const platform = (params.get("platform") ?? "macos") as PlatformStyle;
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
 const appearance: SystemAppearance = {
   platform,
   accent: null,
   font_family: null,
-  font_size: null,
+  font_points: null,
   titlebar_height: platform === "macos" ? 32 : null,
+  window_buttons: platform === "gnome" ? { start: [], end: ["close"] } : null,
+  color_scheme: platform === "kde" ? BREEZE[dark ? "dark" : "light"] : null,
+  mica: platform === "windows",
 };
 window.__NEWT_APPEARANCE__ = appearance;
 const readySelectors = [READY[scene.window], scene.ready].filter(
@@ -120,8 +159,11 @@ const publish = () => {
   });
 };
 
-const reportTitle = (title: string) =>
-  window.parent.postMessage({ sceneTitle: scene.title ?? title }, "*");
+let windowTitle = "";
+const reportTitle = (title: string) => {
+  windowTitle = scene.title ?? title;
+  window.parent.postMessage({ sceneTitle: windowTitle }, "*");
+};
 
 const fixture = (path: VfsPath) =>
   scene.files?.[path.path] ?? fail(`no fixture for ${path.path}`);
@@ -199,6 +241,8 @@ const handlers: Record<string, (args: any) => unknown> = {
   get_runtime_state: () => runtimeState,
   get_system_appearance: () => appearance,
   "plugin:window|is_fullscreen": () => false,
+  "plugin:window|is_maximized": () => false,
+  "plugin:window|title": () => windowTitle,
   file_info: ({ path }: { path: VfsPath }) => infoOf(path),
   inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
     const { mime, viewerMode } = fixture(path);

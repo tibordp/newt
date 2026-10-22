@@ -15,10 +15,15 @@ const platform = params.get("platform") ?? "macos";
 const CONTROLS: Record<string, number> = {
   macos: 0,
   windows: 3,
-  gnome: 1,
   kde: 3,
 };
-const MACOS_TITLEBAR = 32;
+
+/// Title bars the app draws itself, which its frame takes in: the strip
+/// under macOS's title bar, GNOME's header bar (none of the frame's own).
+const DRAWN_TITLEBAR: Record<string, number> = {
+  macos: 32,
+  gnome: 46,
+};
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -37,8 +42,7 @@ if (scene) {
       `/docs/scenes/scene.html?scene=${encodeURIComponent(name!)}` +
       `&platform=${encodeURIComponent(platform)}`,
   });
-  // The app draws under macOS's title bar, so its frame takes that too.
-  const overlay = platform === "macos" ? MACOS_TITLEBAR : 0;
+  const overlay = DRAWN_TITLEBAR[platform] ?? 0;
   iframe.style.width = `${scene.size.width}px`;
   iframe.style.height = `${scene.size.height + overlay}px`;
   window.addEventListener("message", (e) => {

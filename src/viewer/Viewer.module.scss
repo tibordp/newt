@@ -13,7 +13,7 @@
   margin: 0;
   padding: 0;
 
-  background: var(--color-bg);
+  background: var(--color-window-bg);
   color: var(--color-fg);
 
   cursor: initial;
@@ -23,6 +23,7 @@
 .viewerContent {
   flex: 1;
   overflow: auto;
+  background: var(--color-bg);
 
   pre {
     margin: 0;

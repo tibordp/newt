@@ -64,6 +64,7 @@ fn build_child_window(
     // started loading at this point, so no IPC has fired yet.
     let window = builder.build()?;
     crate::tune_webview_settings(&window);
+    crate::appearance::window_built(&window, visible);
 
     // Live title-bar updates on theme-preference changes. (Webview
     // content already follows globally via the shared WebView2 profile /

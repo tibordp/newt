@@ -37,6 +37,7 @@ self.MonacoEnvironment = {
 loader.config({ monaco });
 
 import styles from "./Editor.module.scss";
+import { setWindowTitle } from "../lib/TitleBar";
 import { useRemoteState, safe } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
@@ -126,7 +127,7 @@ function Editor() {
   useEffect(() => {
     if (!displayPath) return;
     const title = `${dirty ? "* " : ""}${displayPath} - Editor`;
-    safeSilent(commands.setWindowTitle(title));
+    setWindowTitle(title);
   }, [displayPath, dirty]);
 
   // Load file when file path becomes available

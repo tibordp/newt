@@ -1,4 +1,5 @@
-.titleBar {
+.titleBar,
+.headerBar {
   position: fixed;
   top: 0;
   left: 0;
@@ -6,4 +7,96 @@
   height: var(--titlebar-height);
   background: var(--color-titlebar);
   z-index: 1;
+
+  :global(:root[data-window-inactive]) & {
+    background: var(--color-titlebar-backdrop);
+  }
+}
+
+// The title centred on the window, whatever the buttons either side take.
+.headerBar {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, auto) 1fr;
+  align-items: center;
+  padding: 0 var(--space-3);
+  color: var(--color-fg);
+  user-select: none;
+
+  :global(:root[data-window-inactive]) & {
+    color: var(--color-fg-muted);
+  }
+}
+
+.start,
+.end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+.end {
+  justify-content: flex-end;
+}
+
+.title {
+  padding: 0 var(--space-5);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.control,
+.menuButton {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  color: inherit;
+  box-shadow: none;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// Round window buttons with a quiet fill, in a box as tall as a button.
+.control {
+  width: 24px;
+  height: 24px;
+  margin: 0 var(--space-1);
+  border-radius: 50%;
+  background: var(--color-control-bg);
+
+  &:hover {
+    background: var(--color-control-hover-bg);
+  }
+
+  &:active {
+    background: var(--color-control-active-bg);
+  }
+}
+
+// A flat button, filled only while hovered or open.
+.menuButton {
+  width: var(--control-height);
+  height: var(--control-height);
+  border-radius: var(--radius-control);
+  background: transparent;
+
+  &:hover {
+    background: var(--color-control-bg);
+  }
+
+  &:active,
+  &[data-state="open"] {
+    background: var(--color-control-active-bg);
+  }
 }
