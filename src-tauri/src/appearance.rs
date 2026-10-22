@@ -260,16 +260,36 @@ mod platform {
     pub(super) fn frame_only(gtk_window: &gtk::ApplicationWindow, webview: &tauri::WebviewWindow) {
         use gtk::gdk::WindowState;
         use gtk::glib::Propagation;
-        use gtk::prelude::{CssProviderExt, GtkWindowExt, StyleContextExt, WidgetExt};
+        use gtk::prelude::{
+            CssProviderExt, GtkSettingsExt, GtkWindowExt, StyleContextExt, WidgetExt,
+        };
 
         thread_local!(static STYLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
         if !STYLED.replace(true)
             && let Some(screen) = gtk::prelude::WidgetExt::screen(gtk_window)
         {
             let provider = gtk::CssProvider::new();
-            provider
-                .load_from_data(FRAME_CSS.as_bytes())
-                .expect("frame stylesheet parses");
+            let load = {
+                let provider = provider.clone();
+                move |dark: bool| {
+                    provider
+                        .load_from_data(frame_css(dark).as_bytes())
+                        .expect("frame stylesheet parses");
+                }
+            };
+            // GTK's dark preference follows the theme in effect, as the
+            // webview's colour scheme does.
+            let settings = gtk::Settings::default();
+            load(
+                settings
+                    .as_ref()
+                    .is_some_and(|s| s.is_gtk_application_prefer_dark_theme()),
+            );
+            if let Some(settings) = settings {
+                settings.connect_gtk_application_prefer_dark_theme_notify(move |s| {
+                    load(s.is_gtk_application_prefer_dark_theme())
+                });
+            }
             gtk::StyleContext::add_provider_for_screen(
                 &screen,
                 &provider,
@@ -277,6 +297,11 @@ mod platform {
             );
         }
         gtk_window.style_context().add_class("newt-frame");
+        // A transparent window is app-paintable, which keeps GTK from
+        // painting its background; it paints the page's here, inside the
+        // rounded frame, where the webview hasn't drawn yet — before the
+        // page loads, and ahead of it in a resize.
+        gtk_window.set_app_paintable(false);
 
         // GTK marks the widget it is given as the title bar `.titlebar`,
         // which the theme draws a border under; the stylesheet takes it
@@ -302,9 +327,15 @@ mod platform {
         });
     }
 
+    /// The page's background (`--color-bg` on GNOME), light and dark.
+    fn frame_css(dark: bool) -> String {
+        let background = if dark { "#1d1d20" } else { "#ffffff" };
+        FRAME_CSS.replace("BACKGROUND", background)
+    }
+
     /// The window's corner radius matches libadwaita's (`--window-radius`).
     const FRAME_CSS: &str = "
-        window.newt-frame { background: transparent; }
+        window.newt-frame { background: BACKGROUND; }
         window.newt-frame, window.newt-frame decoration { border-radius: 12px; }
         window.newt-frame.maximized, window.newt-frame.maximized decoration,
         window.newt-frame.fullscreen, window.newt-frame.fullscreen decoration,
