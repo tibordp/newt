@@ -1,13 +1,13 @@
 import type { Density, PlatformStyle } from "../lib/bindings";
 import { fontSize, useAppearance } from "../lib/appearance";
 
-/// Room around a file list row's text at the default density: Finder's 22px
-/// rows at 13px, Explorer's 22px at 12px, roomier rows on GNOME and KDE.
+/// Room around a file list row's text at the default density: 22px rows at
+/// each look's default font size (Explorer's 12px, everywhere else 13px).
 const ROW_PADDING: Record<PlatformStyle, number> = {
   macos: 9,
   windows: 10,
-  gnome: 11,
-  kde: 10,
+  gnome: 9,
+  kde: 9,
 };
 
 const DENSITY_STEP: Record<Density, number> = {
