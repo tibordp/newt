@@ -145,7 +145,7 @@ function BarMenu({
         tabIndex={-1}
         title={title}
       >
-        {label} <span aria-hidden>&#x25BE;</span>
+        {label}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content

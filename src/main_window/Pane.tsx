@@ -515,17 +515,12 @@ function VfsSelectorLabel({
   compact: boolean;
 }) {
   const icon = compact ? VFS_ICONS[typeName] : undefined;
-  return (
-    <>
-      {icon ? (
-        <span className={styles.vfsSelectorIcon} aria-hidden>
-          {icon}
-        </span>
-      ) : (
-        name
-      )}{" "}
-      <span aria-hidden>&#x25BE;</span>
-    </>
+  return icon ? (
+    <span className={styles.vfsSelectorIcon} aria-hidden>
+      {icon}
+    </span>
+  ) : (
+    name
   );
 }
 
