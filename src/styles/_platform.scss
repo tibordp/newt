@@ -151,6 +151,9 @@
   --font-size-sm: var(--font-size-base);
   --font-size-xs: calc(var(--font-size-base) - 1px);
   --font-size-command-bar: var(--font-size-base);
+  // At the status bar's size it takes the status bar's quieter colour too,
+  // so it doesn't read as a third list.
+  --color-command-bar-fg: var(--color-chrome-fg);
 
   --color-fg: #1b1b1b;
   --color-fg-muted: #616161;
