@@ -481,10 +481,13 @@
   border: 1px solid transparent;
   color: var(--color-fg-muted);
   cursor: pointer;
+  // As tall as the status bar's text, the border reaching into its
+  // padding, so a bar with toggles is no taller than one without.
   padding: 0 6px;
-  font-size: 12px;
+  margin-block: -1px;
+  font-size: inherit;
+  line-height: inherit;
   border-radius: 3px;
-  line-height: 1.4;
 
   &:hover {
     color: var(--color-fg);
