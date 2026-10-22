@@ -200,7 +200,9 @@
   // A row's highlight, inset from the pane's edges.
   --radius-row: var(--radius-md);
   --row-inset: var(--space-1);
-  // Where a row's (and the column header's) content starts.
+  // Where a row's (and the column header's) content starts. The icon's
+  // box is as wide as the row is tall, the glyph centred in it, so the
+  // icon already stands some 7px clear of the highlight's edge.
   --row-padding-start: 3px;
   // The column header above the file list.
   --header-height: calc(var(--row-height) + 2px);
