@@ -136,7 +136,14 @@ function HeaderBar({ buttons }: { buttons: WindowButtons }) {
   }, [maximized]);
 
   return (
-    <div className={styles.headerBar} data-tauri-drag-region>
+    <div
+      className={styles.headerBar}
+      data-tauri-drag-region
+      onContextMenu={(e) => {
+        e.preventDefault();
+        void commands.showWindowMenu();
+      }}
+    >
       <div className={styles.start} data-tauri-drag-region>
         {buttons.start.map((b) => (
           <WindowControl key={b} kind={b} maximized={maximized} />

@@ -167,6 +167,24 @@ pub fn get_system_appearance() -> SystemAppearance {
     system_appearance()
 }
 
+/// The window manager's window menu, for a right click on the header bar
+/// Newt draws (GNOME).
+#[tauri::command]
+#[specta::specta]
+pub async fn show_window_menu(webview_window: tauri::WebviewWindow) {
+    #[cfg(target_os = "linux")]
+    {
+        let target = webview_window.clone();
+        let _ = webview_window.run_on_main_thread(move || {
+            if let Ok(gtk_window) = target.gtk_window() {
+                platform::show_window_menu(&gtk_window);
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = webview_window;
+}
+
 fn hex(r: f64, g: f64, b: f64) -> String {
     let c = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("#{:02x}{:02x}{:02x}", c(r), c(g), c(b))
@@ -309,6 +327,15 @@ mod platform {
         let titlebar = gtk::EventBox::new();
         gtk_window.set_titlebar(Some(&titlebar));
 
+        let _ = webview.with_webview(|pw| {
+            pw.inner().connect_button_press_event(|_, event| {
+                if event.button() == 3 {
+                    RIGHT_PRESS.set(Some(event.clone()));
+                }
+                Propagation::Proceed
+            });
+        });
+
         let webview = webview.clone();
         gtk_window.connect_window_state_event(move |_, event| {
             let square = event.new_window_state().intersects(
@@ -325,6 +352,42 @@ mod platform {
             ));
             Propagation::Proceed
         });
+    }
+
+    thread_local! {
+        /// The window menu is shown for the press that asked for it, which
+        /// WebKit has taken by the time the page asks.
+        static RIGHT_PRESS: std::cell::RefCell<Option<gtk::gdk::EventButton>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn show_window_menu(gtk_window: &gtk::ApplicationWindow) {
+        use gtk::glib::translate::ToGlibPtrMut;
+        use gtk::prelude::WidgetExt;
+
+        let Some(mut press) = RIGHT_PRESS.take() else {
+            return;
+        };
+        let (Some(toplevel), Some(mut from)) = (gtk_window.window(), press.window()) else {
+            return;
+        };
+        // The press is in the webview's coordinates; the menu goes by the
+        // window's. A press in another window never reaches this one.
+        let (mut x, mut y) = press.position();
+        while from != toplevel {
+            (x, y) = from.coords_to_parent(x, y);
+            let Some(parent) = from.parent() else {
+                return;
+            };
+            from = parent;
+        }
+        // SAFETY: `press` owns the event, a button press.
+        unsafe {
+            let raw: *mut gtk::gdk::ffi::GdkEventButton = press.to_glib_none_mut().0;
+            (*raw).x = x;
+            (*raw).y = y;
+        }
+        toplevel.show_window_menu(&mut press);
     }
 
     /// The page's background (`--color-bg` on GNOME), light and dark.

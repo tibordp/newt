@@ -129,6 +129,13 @@ async getSystemAppearance() : Promise<SystemAppearance> {
     return await TAURI_INVOKE("get_system_appearance");
 },
 /**
+ * The window manager's window menu, for a right click on the header bar
+ * Newt draws (GNOME).
+ */
+async showWindowMenu() : Promise<void> {
+    await TAURI_INVOKE("show_window_menu");
+},
+/**
  * The window's menu, for its header bar; `None` if it has none.
  */
 async getWindowMenu() : Promise<MenuEntry[] | null> {
