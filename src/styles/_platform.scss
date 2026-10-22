@@ -303,7 +303,7 @@
 // GNOME (libadwaita): a header bar Newt draws itself, running on into the
 // pane headers, which turns to the window colour with the window in the
 // background; flat borderless buttons and fields on a translucent fill,
-// inner focus rings, pill tabs, and floating dialogs whose buttons share
+// inner focus rings, and floating dialogs whose buttons share
 // the bottom edge.
 :root[data-platform="gnome"] {
   --font-ui:
@@ -372,10 +372,11 @@
   --radius-menu-item: 6px;
   --menu-item-height: 32px;
 
-  --radius-tab: 6px;
-  --tab-margin: 3px 0 3px 3px;
+  // Flat tabs, as in dialogs, underlined.
   --color-tab-separator: transparent;
-  --color-tab-active-bg: var(--color-control-bg);
+  --color-tab-active-bg: transparent;
+  --tab-mark-offset: -2px;
+  --color-tab-mark-idle: var(--color-border-strong);
 
   &[data-window-inactive] {
     --color-chrome-light: #fafafb;

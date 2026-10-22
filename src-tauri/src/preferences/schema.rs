@@ -92,10 +92,21 @@ pub struct TerminalPreferences {
     pub scrollback: u32,
 }
 
+/// Each platform's own terminal font, then its predecessors. On Linux,
+/// fontconfig stands Liberation Mono in for Courier New, so it stays off
+/// the list.
+#[cfg(target_os = "macos")]
+const TERMINAL_FONT: &str = r#"Menlo, Monaco, "Courier New", monospace"#;
+#[cfg(windows)]
+const TERMINAL_FONT: &str = r#""Cascadia Mono", Consolas, "Courier New", monospace"#;
+#[cfg(not(any(target_os = "macos", windows)))]
+const TERMINAL_FONT: &str =
+    r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#;
+
 impl Default for TerminalPreferences {
     fn default() -> Self {
         Self {
-            font_family: r#"Menlo, Monaco, "Courier New", monospace"#.into(),
+            font_family: TERMINAL_FONT.into(),
             font_size: 12,
             scrollback: 1000,
         }

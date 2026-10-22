@@ -58,16 +58,16 @@
   &.active {
     background: var(--color-tab-active-bg);
     color: var(--color-fg);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-tab-mark-idle);
     @include fc.selected;
   }
 
-  // An accent line along the top while the terminal has focus.
   .tabBarFocused &.active {
-    box-shadow: inset 0 2px 0 var(--color-accent);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-accent);
   }
 
   :global(:root[data-window-inactive]) .tabBarFocused &.active {
-    box-shadow: inset 0 2px 0 var(--color-fg-muted);
+    box-shadow: inset 0 var(--tab-mark-offset) 0 var(--color-fg-muted);
   }
 
   &.defunct {

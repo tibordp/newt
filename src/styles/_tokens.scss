@@ -165,6 +165,10 @@
   --tab-margin: 0;
   --color-tab-separator: var(--color-separator);
   --color-tab-active-bg: var(--color-bg);
+  // The active tab's line: along its top (or, negative, its bottom) in the
+  // accent while the terminal has focus, and in this colour while not.
+  --tab-mark-offset: 2px;
+  --color-tab-mark-idle: transparent;
 
   // Drag rect
   --color-drag-rect-bg: var(--_drag-rect-bg);
