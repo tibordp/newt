@@ -260,6 +260,7 @@ function Editor() {
 
   useScopedBindings("editor", {
     editor_save: () => void save(),
+    editor_close: () => void closeEditor(),
   });
 
   // Mirror the resolved save binding into Monaco so the key works natively

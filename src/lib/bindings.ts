@@ -143,6 +143,14 @@ async isWindowActive() : Promise<boolean> {
     return await TAURI_INVOKE("is_window_active");
 },
 /**
+ * Whether GTK has squared the frame's corners (maximized, tiled, full
+ * screen) under the header bar Newt draws, for a page that has only just
+ * loaded; changes after that are pushed as they happen.
+ */
+async hasSquareCorners() : Promise<boolean> {
+    return await TAURI_INVOKE("has_square_corners");
+},
+/**
  * The window's menu, for its header bar; `None` if it has none.
  */
 async getWindowMenu() : Promise<MenuEntry[] | null> {

@@ -283,24 +283,26 @@ fn check_menu_items(menu: &Menu<Wry>) -> impl Iterator<Item = CheckMenuItem<Wry>
 }
 
 fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, Error> {
-    // File menu. The Save accelerator mirrors the resolved `editor_save`
-    // binding on macOS, where the menu bar claims the key ahead of the
-    // webview no matter what the registry says; `rebuild_menus` keeps it in
-    // sync. Other platforms register no accelerator — the webview handles
-    // the key directly (same approach as the viewer menu).
+    // File menu. The Save and Close accelerators mirror the resolved
+    // `editor_save` and `editor_close` bindings on macOS, where the menu bar
+    // claims the key ahead of the webview no matter what the registry says;
+    // `rebuild_menus` keeps them in sync. Other platforms register no
+    // accelerator — the webview handles the key directly (same approach as
+    // the viewer menu).
     #[cfg(target_os = "macos")]
-    let save_accel: Option<String> = {
+    let accel = |id: &str| -> Option<String> {
         let global_ctx: State<GlobalContext> = app_handle.state();
         let resolved = global_ctx.preferences().resolved();
         resolved
             .commands
             .iter()
-            .find(|c| c.id == "editor_save")
+            .find(|c| c.id == id)
             .and_then(|c| c.shortcut.as_deref())
             .and_then(crate::main_window::menu::accelerator)
     };
     #[cfg(not(target_os = "macos"))]
-    let save_accel: Option<String> = None;
+    let accel = |_: &str| -> Option<String> { None };
+    let save_accel = accel("editor_save");
 
     let save_item = MenuItem::with_id(
         app_handle,
@@ -314,7 +316,7 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
         format!("{}close", prefix),
         "Close",
         true,
-        Some("CmdOrCtrl+W"),
+        accel("editor_close").as_deref(),
     )?;
     let file_submenu = Submenu::with_items(
         app_handle,

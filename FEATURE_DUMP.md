@@ -1141,7 +1141,7 @@ The language comes from [file associations](#file-associations); the built-in on
 On GNOME the menu is the header bar's primary menu (☰) instead, as for the viewer.
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
-- **File**: Save, Close (Cmd/Ctrl+W, fixed — not a rebindable command). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
+- **File**: Save, Close. On macOS their accelerators mirror the resolved `editor_save` and `editor_close` bindings and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no accelerators — the webview handles the keys.
 - **View**: Word Wrap (checkbox toggle). Each newly opened file starts from the `editor.word_wrap` preference (default off); toggling wrap on an open file overrides it for that file only.
 - **Edit** (macOS only): Cut, Copy, Paste, Select All.
 - **Language**: Radio buttons for all supported languages (Plain Text, Batch, C, C++, C#, CSS, Dockerfile, Go, GraphQL, HCL, HTML, INI / TOML, Java, JavaScript, JSON, Kotlin, Less, Lua, Markdown, Objective-C, Perl, PHP, PowerShell, Python, R, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
@@ -2473,6 +2473,7 @@ Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding
 | `viewer_cycle_background` | b | Image |
 | `viewer_toggle_info` | i | Image |
 | `editor_save` | Mod+S | Editor |
+| `editor_close` | Mod+W | Editor |
 
 The editor's Escape (close, asking first when there are unsaved changes) and Monaco's own editing keys are fixed.
 

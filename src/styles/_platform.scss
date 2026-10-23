@@ -312,9 +312,9 @@
 // GNOME (libadwaita), the look of every Linux desktop but KDE: on GNOME
 // itself a header bar Newt draws, running on into the pane headers, which
 // turns to the window colour with the window in the background (elsewhere
-// the desktop's own title bar); flat borderless buttons and fields on a translucent fill,
-// inner focus rings, and floating dialogs whose buttons share
-// the bottom edge.
+// the desktop's own title bar); flat borderless buttons and fields on a
+// translucent fill, inner focus rings, and floating dialogs whose buttons
+// share the bottom edge.
 :root[data-platform="gnome"] {
   --font-ui:
     var(--font-system, "Adwaita Sans"), "Adwaita Sans", Cantarell, system-ui,

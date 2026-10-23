@@ -143,6 +143,7 @@ pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
     if let Err(e) = result {
         log::warn!("could not finish the window: {e}");
     }
+    #[cfg(not(target_os = "linux"))]
     let _ = visible;
 }
 
@@ -160,6 +161,22 @@ fn set_active(window: &tauri::WebviewWindow, active: bool) {
 #[specta::specta]
 pub fn is_window_active(webview_window: tauri::WebviewWindow) -> bool {
     platform::is_active(&webview_window)
+}
+
+/// Whether GTK has squared the frame's corners (maximized, tiled, full
+/// screen) under the header bar Newt draws, for a page that has only just
+/// loaded; changes after that are pushed as they happen.
+#[tauri::command]
+#[specta::specta]
+pub fn has_square_corners(webview_window: tauri::WebviewWindow) -> bool {
+    #[cfg(target_os = "linux")]
+    let square = platform::has_square_corners(&webview_window);
+    #[cfg(not(target_os = "linux"))]
+    let square = {
+        let _ = webview_window;
+        false
+    };
+    square
 }
 
 /// Whether Newt draws the window's title bar as a header bar (GNOME itself),
@@ -370,7 +387,6 @@ mod platform {
     /// match (`_platform.scss`), squaring them, as GTK squares its frame,
     /// while the window is maximized, tiled or full screen.
     pub(super) fn frame_only(gtk_window: &gtk::ApplicationWindow, webview: &tauri::WebviewWindow) {
-        use gtk::gdk::WindowState;
         use gtk::glib::Propagation;
         use gtk::prelude::{
             CssProviderExt, GtkSettingsExt, GtkWindowExt, StyleContextExt, WidgetExt,
@@ -432,20 +448,31 @@ mod platform {
 
         let webview = webview.clone();
         gtk_window.connect_window_state_event(move |_, event| {
-            let square = event.new_window_state().intersects(
-                WindowState::MAXIMIZED
-                    | WindowState::FULLSCREEN
-                    | WindowState::TILED
-                    | WindowState::TOP_TILED
-                    | WindowState::RIGHT_TILED
-                    | WindowState::BOTTOM_TILED
-                    | WindowState::LEFT_TILED,
-            );
-            let _ = webview.eval(format!(
-                "document.documentElement.toggleAttribute('data-square-corners', {square})"
-            ));
+            if event.changed_mask().intersects(SQUARE) {
+                let square = event.new_window_state().intersects(SQUARE);
+                let _ = webview.eval(format!("window.__NEWT_SET_SQUARE_CORNERS__?.({square})"));
+            }
             Propagation::Proceed
         });
+    }
+
+    /// The states GTK squares the frame's corners in.
+    const SQUARE: gtk::gdk::WindowState = gtk::gdk::WindowState::MAXIMIZED
+        .union(gtk::gdk::WindowState::FULLSCREEN)
+        .union(gtk::gdk::WindowState::TILED)
+        .union(gtk::gdk::WindowState::TOP_TILED)
+        .union(gtk::gdk::WindowState::RIGHT_TILED)
+        .union(gtk::gdk::WindowState::BOTTOM_TILED)
+        .union(gtk::gdk::WindowState::LEFT_TILED);
+
+    pub(super) fn has_square_corners(window: &tauri::WebviewWindow) -> bool {
+        use gtk::prelude::WidgetExt;
+
+        window
+            .gtk_window()
+            .ok()
+            .and_then(|w| w.window())
+            .is_some_and(|w| w.state().intersects(SQUARE))
     }
 
     thread_local! {

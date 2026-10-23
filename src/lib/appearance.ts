@@ -1,11 +1,11 @@
 /// The platform look the token layer (`_platform.scss`) follows: the design
-/// language as `data-platform` on the root, the system accent, UI font, KDE
-/// colour scheme and macOS window background as custom properties, Mica as
-/// `data-backdrop`, and
-/// `data-window-inactive` while another window is active. Rust hands every
-/// window the current values before its first paint
-/// (`window.__NEWT_APPEARANCE__`); a window asks again whenever it regains
-/// focus, which is when a change made in the system settings shows.
+/// language as `data-platform` on the root; the system accent, UI font, KDE
+/// colour scheme and macOS window background as custom properties; Mica as
+/// `data-backdrop`; `data-window-inactive` while another window is active,
+/// and `data-square-corners` while GTK squares the frame under GNOME's
+/// header bar. Rust hands every window the current values before its first
+/// paint (`window.__NEWT_APPEARANCE__`); a window asks again whenever it
+/// regains focus, which is when a change made in the system settings shows.
 
 import { useSyncExternalStore } from "react";
 import {
@@ -18,8 +18,9 @@ import {
 declare global {
   interface Window {
     __NEWT_APPEARANCE__?: SystemAppearance;
-    /// Rust calls it as the window becomes active or stops being so.
+    /// Rust calls these as the window's state changes (`followWindow`).
     __NEWT_SET_ACTIVE__?: (active: boolean) => void;
+    __NEWT_SET_SQUARE_CORNERS__?: (square: boolean) => void;
   }
 }
 
@@ -153,26 +154,41 @@ export function initAppearance() {
   // pane's dot, the terminal tab's line) turn grey, and so does GNOME's
   // header bar.
   const root = document.documentElement;
-  let told = false;
-  const setActive = (active: boolean) =>
-    root.toggleAttribute("data-window-inactive", !active);
-  window.__NEWT_SET_ACTIVE__ = (active) => {
-    told = true;
-    setActive(active);
-  };
-  commands.isWindowActive().then(
-    (active) => {
-      if (!told) setActive(active);
-    },
-    () => {},
+  followWindow("__NEWT_SET_ACTIVE__", commands.isWindowActive, (active) =>
+    root.toggleAttribute("data-window-inactive", !active),
+  );
+  followWindow(
+    "__NEWT_SET_SQUARE_CORNERS__",
+    commands.hasSquareCorners,
+    (square) => root.toggleAttribute("data-square-corners", square),
   );
   window.addEventListener("focus", () => {
     commands.getSystemAppearance().then(update, () => {});
   });
 }
 
-/// macOS hides the title bar in full screen, and GNOME's header bar goes
-/// with it, so the strip under it goes too.
+/// A window state Rust pushes as it changes, by calling `window[setter]`;
+/// the page asks once as well, for a change made before it loaded.
+function followWindow(
+  setter: "__NEWT_SET_ACTIVE__" | "__NEWT_SET_SQUARE_CORNERS__",
+  query: () => Promise<boolean>,
+  apply: (value: boolean) => void,
+) {
+  let told = false;
+  window[setter] = (value) => {
+    told = true;
+    apply(value);
+  };
+  query().then(
+    (value) => {
+      if (!told) apply(value);
+    },
+    () => {},
+  );
+}
+
+/// GNOME's header bar goes away in full screen, and the strip under it
+/// with it.
 export function setFullscreen(value: boolean) {
   if (value === fullscreen) return;
   fullscreen = value;
