@@ -172,7 +172,7 @@
   &[data-kind="checksum"],
   &[data-kind="addr"],
   &[data-kind="color"] {
-    font-family: var(--font-mono);
+    font-family: var(--viewer-font);
     font-size: 12px;
   }
 
@@ -243,7 +243,7 @@
 
 .raw {
   flex-shrink: 0;
-  font-family: var(--font-mono);
+  font-family: var(--viewer-font);
   font-size: 11px;
   color: var(--color-fg-muted);
 }
@@ -265,7 +265,7 @@
   flex-shrink: 0;
   margin-left: auto;
   padding-left: var(--space-5);
-  font-family: var(--font-mono);
+  font-family: var(--viewer-font);
   font-size: 11px;
   color: var(--color-fg-muted);
 }
@@ -396,9 +396,9 @@
   outline: none;
   position: relative;
   padding: 0 var(--space-4);
-  font-family: monospace;
-  font-size: 13px;
-  line-height: 18px;
+  font-family: var(--viewer-font);
+  font-size: var(--viewer-font-size);
+  line-height: var(--viewer-line-height);
   user-select: none;
   -webkit-user-select: none;
   cursor: text;
@@ -412,7 +412,7 @@
 
 .hexLine {
   position: absolute;
-  height: 18px;
+  height: var(--viewer-line-height);
   display: flex;
   white-space: pre;
 }
@@ -528,7 +528,7 @@
 }
 
 .mono {
-  font-family: var(--font-mono);
+  font-family: var(--viewer-font);
   font-size: 12px;
 }
 

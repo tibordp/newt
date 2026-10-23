@@ -3118,6 +3118,15 @@ host_access: boolean | null }
 export type EditorLanguage = { id: string; label: string }
 export type EditorPreferences = { 
 /**
+ * Font of the built-in text editor, as a CSS font-family list: the first
+ * one installed is used.
+ */
+font_family: string; 
+/**
+ * Font size of the built-in text editor, in pixels.
+ */
+font_size: number; 
+/**
  * Wrap long lines in the built-in text editor by default. Toggling wrap
  * on an open file still overrides this for that file.
  */
@@ -4738,6 +4747,16 @@ export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf" | 
  */
 "dissect"
 export type ViewerPreferences = { 
+/**
+ * Font of the viewer's text and hex modes and of the bytes and values in
+ * Structure, as a CSS font-family list: the first one installed is used.
+ */
+font_family: string; 
+/**
+ * Font size of the viewer's text and hex modes and of Structure's bytes,
+ * in pixels.
+ */
+font_size: number; 
 /**
  * Backdrop behind images in the viewer's image mode.
  */

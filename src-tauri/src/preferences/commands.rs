@@ -979,17 +979,22 @@ pub fn default_commands(platform: Platform) -> Vec<CommandDef> {
         viewer_command("viewer_flip_vertical", "Viewer: Flip Vertical", &["v"]),
         viewer_command("viewer_cycle_background", "Viewer: Cycle Background", &["b"]),
         viewer_command("viewer_toggle_info", "Viewer: Image Info", &["i"]),
-        CommandDef {
-            id: "editor_save".into(),
-            name: "Editor: Save".into(),
-            short_name: None,
-            category: "Editor".into(),
-            default_keys: vec!["mod+s".into()],
-            default_when: Some("editor".into()),
-            needs_pane: false,
-            scope: CommandScope::Editor,
-        },
+        editor_command("editor_save", "Editor: Save", &["mod+s"]),
+        editor_command("editor_close", "Editor: Close", &["mod+w"]),
     ]
+}
+
+fn editor_command(id: &str, name: &str, default_keys: &[&str]) -> CommandDef {
+    CommandDef {
+        id: id.into(),
+        name: name.into(),
+        short_name: None,
+        category: "Editor".into(),
+        default_keys: default_keys.iter().map(|&k| k.into()).collect(),
+        default_when: Some("editor".into()),
+        needs_pane: false,
+        scope: CommandScope::Editor,
+    }
 }
 
 fn viewer_command(id: &str, name: &str, default_keys: &[&str]) -> CommandDef {

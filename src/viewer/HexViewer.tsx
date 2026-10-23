@@ -32,6 +32,7 @@ import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 import { useEmbeddedCopy, useViewerHost } from "./host";
+import { useMonospaceFont } from "../lib/monospace";
 import { useWheelScroll } from "../lib/useWheelScroll";
 
 export interface HexViewerProps {
@@ -87,7 +88,8 @@ export function HexViewer({
   const [topRow, setTopRow] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [, forceUpdate] = useState(0);
-  const rowHeight = 18;
+  const font = useMonospaceFont("viewer");
+  const rowHeight = font.lineHeight;
 
   // Selection state
   const [hexSelection, setHexSelection] = useState<HexSelection | null>(null);
@@ -146,7 +148,7 @@ export function HexViewer({
     col.appendChild(span);
     charWidthRef.current = span.getBoundingClientRect().width;
     col.removeChild(span);
-  }, []);
+  }, [font.family, font.size]);
 
   // For unknown-size files (fileSize=0, e.g. /dev/urandom), add extra rows
   // so the user can scroll further and trigger more reads. For known-size
@@ -568,6 +570,7 @@ export function HexViewer({
   return (
     <div
       className={styles.viewer}
+      style={font.style}
       ref={viewerRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}

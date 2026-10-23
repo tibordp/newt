@@ -45,6 +45,7 @@ import {
 } from "./helpers";
 import { DissectAs, type DissectAsTarget } from "./DissectAs";
 import { ValueInline, ValueRows, copyableValue } from "./DissectValue";
+import { useMonospaceFont } from "../lib/monospace";
 import { useEmbeddedCopy, useViewerHost } from "./host";
 import { IconChevronRight } from "./icons";
 import { useAfterGrace } from "../lib/useAfterGrace";
@@ -56,7 +57,6 @@ import viewerStyles from "./Viewer.module.scss";
 /// Children asked for at a time.
 const PAGE = 200;
 const TREE_ROW = 22;
-const HEX_ROW = 18;
 const OVERSCAN = 6;
 
 export interface DissectViewerProps {
@@ -128,6 +128,8 @@ export function DissectViewer({
   const host = useViewerHost();
   const shortcuts = useCommandShortcuts();
   const formatSize = useFormatBytes();
+  const font = useMonospaceFont("viewer");
+  const hexRow = font.lineHeight;
   const fileKey = JSON.stringify(vfsPath);
   // Read when the file is dissected; a choice made since is in effect
   // already.
@@ -623,10 +625,10 @@ export function DissectViewer({
   const [hexTop, setHexTop] = useState(0);
   const [hexHeight, setHexHeight] = useState(0);
   const hexRows = Math.ceil(sourceLen / HEX_BYTES_PER_ROW);
-  const hexNatural = hexRows * HEX_ROW;
+  const hexNatural = hexRows * hexRow;
   const hexScale =
     hexNatural > MAX_SCROLL_HEIGHT ? hexNatural / MAX_SCROLL_HEIGHT : 1;
-  const hexVisible = Math.max(1, Math.floor(hexHeight / HEX_ROW));
+  const hexVisible = Math.max(1, Math.floor(hexHeight / hexRow));
   const hexFirst = Math.max(0, hexTop - OVERSCAN);
   const hexLast = Math.min(hexRows, hexTop + hexVisible + OVERSCAN);
   const syncHex = useCallback(
@@ -634,10 +636,10 @@ export function DissectViewer({
       setHexTop(
         Math.min(
           Math.max(0, hexRows - hexVisible),
-          Math.floor((el.scrollTop * hexScale) / HEX_ROW),
+          Math.floor((el.scrollTop * hexScale) / hexRow),
         ),
       ),
-    [hexRows, hexVisible, hexScale],
+    [hexRows, hexVisible, hexScale, hexRow],
   );
   useWheelScroll(hexRef, { sync: syncHex });
 
@@ -646,10 +648,10 @@ export function DissectViewer({
       const el = hexRef.current;
       if (!el) return;
       const top = center ? row - Math.floor(hexVisible / 3) : row;
-      el.scrollTop = (Math.max(0, top) * HEX_ROW) / hexScale;
+      el.scrollTop = (Math.max(0, top) * hexRow) / hexScale;
       setHexTop(Math.max(0, top));
     },
-    [hexVisible, hexScale],
+    [hexVisible, hexScale, hexRow],
   );
 
   /// Keep byte `offset` in view.
@@ -797,7 +799,7 @@ export function DissectViewer({
   useLayoutEffect(() => {
     const el = hexRef.current;
     if (!bytesOpen || !el) return;
-    el.scrollTop = (hexTop * HEX_ROW) / hexScale;
+    el.scrollTop = (hexTop * hexRow) / hexScale;
     if (zone === "hex" && !host.embedded) el.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bytesOpen]);
@@ -1556,7 +1558,7 @@ export function DissectViewer({
       <div
         key={r}
         className={styles.hexLine}
-        style={{ top: (r - hexTop) * HEX_ROW + (hexTop * HEX_ROW) / hexScale }}
+        style={{ top: (r - hexTop) * hexRow + (hexTop * hexRow) / hexScale }}
       >
         <span className={styles.hexOffset}>{formatHexOffset(base)}</span>
         <span className={styles.hexBytes}>{bytes}</span>
@@ -1574,7 +1576,7 @@ export function DissectViewer({
         : `Stream #${source}`;
 
   return (
-    <div className={`${viewerStyles.viewer} ${styles.root}`}>
+    <div className={`${viewerStyles.viewer} ${styles.root}`} style={font.style}>
       <div className={styles.body}>
         <div
           className={styles.treePane}

@@ -54,8 +54,8 @@ impl AppPreferences {
             quick_open: Default::default(),
             environment: EnvironmentPreferences::for_platform(platform),
             terminal: TerminalPreferences::for_platform(platform),
-            editor: Default::default(),
-            viewer: Default::default(),
+            editor: EditorPreferences::for_platform(platform),
+            viewer: ViewerPreferences::for_platform(platform),
         }
     }
 }
@@ -66,9 +66,17 @@ impl Default for AppPreferences {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct ViewerPreferences {
+    /// Font of the viewer's text and hex modes and of the bytes and values in
+    /// Structure, as a CSS font-family list: the first one installed is used.
+    #[schemars(title = "Font")]
+    pub font_family: String,
+    /// Font size of the viewer's text and hex modes and of Structure's bytes,
+    /// in pixels.
+    #[schemars(title = "Font Size", range(min = 6, max = 72))]
+    pub font_size: u32,
     /// Backdrop behind images in the viewer's image mode.
     #[schemars(title = "Image Background")]
     pub image_background: ImageBackground,
@@ -77,6 +85,23 @@ pub struct ViewerPreferences {
     /// whatever this says.
     #[schemars(title = "F3 Switches To")]
     pub alternate_mode: AlternateMode,
+}
+
+impl ViewerPreferences {
+    fn for_platform(platform: Platform) -> Self {
+        Self {
+            font_family: monospace_font(platform).into(),
+            font_size: 13,
+            image_background: Default::default(),
+            alternate_mode: Default::default(),
+        }
+    }
+}
+
+impl Default for ViewerPreferences {
+    fn default() -> Self {
+        Self::for_platform(Platform::HOST)
+    }
 }
 
 #[derive(
@@ -117,22 +142,25 @@ pub struct TerminalPreferences {
     pub scrollback: u32,
 }
 
+/// Each platform's own monospace font, then its predecessors, for the
+/// terminal, the editor and the viewer. On Linux, fontconfig stands
+/// Liberation Mono in for Courier New, so it stays off the list.
+fn monospace_font(platform: Platform) -> &'static str {
+    match platform {
+        Platform::Macos => r#"Menlo, Monaco, "Courier New", monospace"#,
+        Platform::Windows => r#""Cascadia Mono", Consolas, "Courier New", monospace"#,
+        Platform::Linux => {
+            r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#
+        }
+    }
+}
+
 impl TerminalPreferences {
-    /// Each platform's own terminal font, then its predecessors. On Linux,
-    /// fontconfig stands Liberation Mono in for Courier New, so it stays off
-    /// the list; the size matches the UI's 13px, which reads as GTK's 11pt.
+    /// On Linux the size matches the UI's 13px, which reads as GTK's 11pt.
     fn for_platform(platform: Platform) -> Self {
-        let (font_family, font_size) = match platform {
-            Platform::Macos => (r#"Menlo, Monaco, "Courier New", monospace"#, 12),
-            Platform::Windows => (r#""Cascadia Mono", Consolas, "Courier New", monospace"#, 12),
-            Platform::Linux => (
-                r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#,
-                13,
-            ),
-        };
         Self {
-            font_family: font_family.into(),
-            font_size,
+            font_family: monospace_font(platform).into(),
+            font_size: if platform == Platform::Linux { 13 } else { 12 },
             scrollback: 1000,
         }
     }
@@ -144,13 +172,36 @@ impl Default for TerminalPreferences {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct EditorPreferences {
+    /// Font of the built-in text editor, as a CSS font-family list: the first
+    /// one installed is used.
+    #[schemars(title = "Font")]
+    pub font_family: String,
+    /// Font size of the built-in text editor, in pixels.
+    #[schemars(title = "Font Size", range(min = 6, max = 72))]
+    pub font_size: u32,
     /// Wrap long lines in the built-in text editor by default. Toggling wrap
     /// on an open file still overrides this for that file.
     #[schemars(title = "Word Wrap")]
     pub word_wrap: bool,
+}
+
+impl EditorPreferences {
+    fn for_platform(platform: Platform) -> Self {
+        Self {
+            font_family: monospace_font(platform).into(),
+            font_size: 13,
+            word_wrap: false,
+        }
+    }
+}
+
+impl Default for EditorPreferences {
+    fn default() -> Self {
+        Self::for_platform(Platform::HOST)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
