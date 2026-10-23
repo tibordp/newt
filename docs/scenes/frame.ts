@@ -3,6 +3,7 @@
 /// scene.
 
 import "./frame.css";
+import appIcon from "../../src-tauri/icons/64x64.png?url";
 import { loadFonts } from "./fonts";
 import type { PlatformStyle } from "../../src/lib/bindings";
 import { scenes } from "./registry";
@@ -80,6 +81,7 @@ if (scene) {
       el("div", { className: `window ${platform}` }, [
         el("div", { className: "titlebar" }, [
           el("span", { className: "lights" }, [el("i"), el("i"), el("i")]),
+          el("img", { className: "icon", src: appIcon, alt: "" }),
           title,
           el("span", { className: "controls" }, controls),
         ]),
