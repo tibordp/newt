@@ -15,7 +15,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --titlebar: #262626;
+    --titlebar: #1e1e1e;
     --title: #a6a6a6;
     --rim: rgb(0 0 0 / 0.7);
     --highlight: rgb(255 255 255 / 0.14);
