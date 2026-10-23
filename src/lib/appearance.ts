@@ -1,6 +1,7 @@
 /// The platform look the token layer (`_platform.scss`) follows: the design
-/// language as `data-platform` on the root, the system accent, UI font and
-/// KDE colour scheme as custom properties, Mica as `data-backdrop`, and
+/// language as `data-platform` on the root, the system accent, UI font, KDE
+/// colour scheme and macOS window background as custom properties, Mica as
+/// `data-backdrop`, and
 /// `data-window-inactive` while another window is active. Rust hands every
 /// window the current values before its first paint
 /// (`window.__NEWT_APPEARANCE__`); a window asks again whenever it regains
@@ -81,6 +82,7 @@ function fallback(): SystemAppearance {
     window_buttons: null,
     color_scheme: null,
     mica: false,
+    window_bg: null,
   };
 }
 
@@ -110,6 +112,8 @@ function apply() {
       ? root.style.removeProperty(name)
       : root.style.setProperty(name, value);
   set("--system-accent", current.accent);
+  set("--system-window-bg-light", current.window_bg?.light);
+  set("--system-window-bg-dark", current.window_bg?.dark);
   set(
     "--font-system",
     current.font_family && JSON.stringify(current.font_family),

@@ -68,6 +68,16 @@ pub struct SystemAppearance {
     pub color_scheme: Option<ColorScheme>,
     /// Mica shows through the window's chrome.
     pub mica: bool,
+    /// The window's background, which a plain title bar is drawn in
+    /// (macOS); the pane headers take it so the title bar runs on into them.
+    pub window_bg: Option<LightDark>,
+}
+
+/// A colour as the light and the dark appearance resolve it, `#rrggbb`.
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+pub struct LightDark {
+    pub light: String,
+    pub dark: String,
 }
 
 pub fn system_appearance() -> SystemAppearance {
@@ -193,9 +203,15 @@ fn hex(r: f64, g: f64, b: f64) -> String {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use objc2_app_kit::{NSColor, NSColorSpace};
+    use std::cell::Cell;
 
-    use super::{PlatformStyle, SystemAppearance, hex};
+    use block2::StackBlock;
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceName, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSColor,
+        NSColorSpace,
+    };
+
+    use super::{LightDark, PlatformStyle, SystemAppearance, hex};
 
     /// The key window is the active one.
     pub(super) fn watch_activation(window: &tauri::WebviewWindow) {
@@ -217,18 +233,39 @@ mod platform {
     }
 
     pub(super) fn read() -> SystemAppearance {
-        let accent = NSColor::controlAccentColor()
-            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
-            .map(|c| hex(c.redComponent(), c.greenComponent(), c.blueComponent()));
         SystemAppearance {
             platform: PlatformStyle::Macos,
-            accent,
+            accent: srgb_hex(&NSColor::controlAccentColor()),
             font_family: None,
             font_points: None,
             window_buttons: None,
             color_scheme: None,
             mica: false,
+            window_bg: light_dark(&NSColor::windowBackgroundColor()),
         }
+    }
+
+    fn srgb_hex(color: &NSColor) -> Option<String> {
+        color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .map(|c| hex(c.redComponent(), c.greenComponent(), c.blueComponent()))
+    }
+
+    /// A dynamic colour as each appearance resolves it.
+    fn light_dark(color: &NSColor) -> Option<LightDark> {
+        // SAFETY: AppKit's appearance names are immutable statics.
+        let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+        let resolve = |name: &NSAppearanceName| {
+            let appearance = NSAppearance::appearanceNamed(name)?;
+            let out = Cell::new(None);
+            let block = StackBlock::new(|| out.set(srgb_hex(color)));
+            appearance.performAsCurrentDrawingAppearance(&block);
+            out.take()
+        };
+        Some(LightDark {
+            light: resolve(light)?,
+            dark: resolve(dark)?,
+        })
     }
 }
 
@@ -314,6 +351,7 @@ mod platform {
             window_buttons: None,
             color_scheme: None,
             mica: mica(),
+            window_bg: None,
         }
     }
 }
@@ -550,6 +588,7 @@ mod platform {
                 window_buttons: buttons,
                 color_scheme: None,
                 mica: false,
+                window_bg: None,
             }
         } else {
             let globals = kdeglobals().and_then(|p| std::fs::read_to_string(p).ok());
@@ -562,6 +601,7 @@ mod platform {
                 window_buttons: None,
                 color_scheme: globals.scheme,
                 mica: false,
+                window_bg: None,
             }
         }
     }
@@ -739,6 +779,17 @@ mod kde {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_window_background_in_both_appearances() {
+        let bg = system_appearance()
+            .window_bg
+            .expect("AppKit resolves the window background");
+        let is_hex = |c: &str| c.len() == 7 && c.starts_with('#');
+        assert!(is_hex(&bg.light) && is_hex(&bg.dark), "{bg:?}");
+        assert_ne!(bg.light, bg.dark);
+    }
 
     #[test]
     fn kdeglobals_accent_font_and_scheme() {

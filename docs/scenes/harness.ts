@@ -121,6 +121,7 @@ const appearance: SystemAppearance = {
   window_buttons: platform === "gnome" ? { start: [], end: ["close"] } : null,
   color_scheme: platform === "kde" ? BREEZE[dark ? "dark" : "light"] : null,
   mica: platform === "windows",
+  window_bg: null,
 };
 window.__NEWT_APPEARANCE__ = appearance;
 await loadFonts(platform);

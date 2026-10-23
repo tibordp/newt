@@ -3424,6 +3424,10 @@ export type LayoutState = {
  */
 terminal_height: number | null }
 /**
+ * A colour as the light and the dark appearance resolve it, `#rrggbb`.
+ */
+export type LightDark = { light: string; dark: string }
+/**
  * How far the connection log has grown. The lines themselves stay out of
  * published state; the frontend fetches them with `connection_log`.
  */
@@ -4551,7 +4555,12 @@ window_buttons: WindowButtons | null; color_scheme: ColorScheme | null;
 /**
  * Mica shows through the window's chrome.
  */
-mica: boolean }
+mica: boolean; 
+/**
+ * The window's background, which a plain title bar is drawn in
+ * (macOS); the pane headers take it so the title bar runs on into them.
+ */
+window_bg: LightDark | null }
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 
