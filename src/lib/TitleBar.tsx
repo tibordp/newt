@@ -10,7 +10,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { MenuEntry, WindowButton, WindowButtons } from "./bindings";
 import { commands } from "./bindings";
 import { safeSilent } from "./ipc";
-import { setFullscreen, useAppearance, useFullscreen } from "./appearance";
+import {
+  drawsHeaderBar,
+  setFullscreen,
+  useAppearance,
+  useFullscreen,
+} from "./appearance";
 import { DropdownMenu as DM, refocusOwner } from "./menus";
 import { Shortcut, useCommands } from "../main_window/ContextMenu";
 import menuStyles from "../main_window/Menu.module.scss";
@@ -84,11 +89,13 @@ function useCommandRunner(): CommandRunner | null {
 /// traffic lights over the top of the page, on the strip this leaves for
 /// them; on GNOME this is the whole header bar, GTK keeping only the
 /// window's frame. Window chrome is the one place a component follows the
-/// platform: Windows and KDE draw their own title bars.
+/// platform: Windows, KDE and the GNOME look on other desktops have the
+/// system's own title bar.
 export function TitleBar() {
-  const { platform, window_buttons, title_leading } = useAppearance();
+  const appearance = useAppearance();
+  const { platform, window_buttons, title_leading } = appearance;
   const fullscreen = useFullscreen();
-  const drawn = platform === "macos" || platform === "gnome";
+  const drawn = platform === "macos" || drawsHeaderBar(appearance);
 
   useEffect(() => {
     if (!drawn) return;
@@ -102,7 +109,7 @@ export function TitleBar() {
   }, [drawn]);
 
   if (!drawn || fullscreen) return null;
-  if (platform === "gnome") {
+  if (drawsHeaderBar(appearance)) {
     return <HeaderBar buttons={window_buttons ?? { start: [], end: [] }} />;
   }
   return <MacTitleBar leading={title_leading} />;

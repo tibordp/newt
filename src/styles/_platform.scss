@@ -313,9 +313,10 @@
   }
 }
 
-// GNOME (libadwaita): a header bar Newt draws itself, running on into the
-// pane headers, which turns to the window colour with the window in the
-// background; flat borderless buttons and fields on a translucent fill,
+// GNOME (libadwaita), the look of every Linux desktop but KDE: on GNOME
+// itself a header bar Newt draws, running on into the pane headers, which
+// turns to the window colour with the window in the background (elsewhere
+// the desktop's own title bar); flat borderless buttons and fields on a translucent fill,
 // inner focus rings, and floating dialogs whose buttons share
 // the bottom edge.
 :root[data-platform="gnome"] {
@@ -391,30 +392,34 @@
   --tab-mark-offset: -2px;
   --color-tab-mark-idle: var(--color-border-strong);
 
-  &[data-window-inactive] {
-    --color-chrome-light: #fafafb;
-  }
+  // With the header bar Newt draws on GNOME itself; other desktops give
+  // the window their own title bar.
+  &[data-header-bar] {
+    &[data-window-inactive] {
+      --color-chrome-light: #fafafb;
+    }
 
-  // The window's corners. GTK rounds its frame but not the window's
-  // contents, so the window is see-through and the page rounds itself to
-  // match (`appearance.rs`), square while GTK squares the frame — maximized,
-  // tiled, full screen.
-  --window-radius: 12px;
-  clip-path: inset(0 round var(--window-radius));
+    // The window's corners. GTK rounds its frame but not the window's
+    // contents, so the window is see-through and the page rounds itself to
+    // match (`appearance.rs`), square while GTK squares the frame —
+    // maximized, tiled, full screen.
+    --window-radius: 12px;
+    clip-path: inset(0 round var(--window-radius));
 
-  &[data-square-corners],
-  &[data-maximized] {
-    --window-radius: 0px;
-  }
+    &[data-square-corners],
+    &[data-maximized] {
+      --window-radius: 0px;
+    }
 
-  body {
-    background: transparent;
-  }
+    body {
+      background: transparent;
+    }
 
-  #root {
-    position: fixed;
-    inset: 0;
-    background: var(--color-window-bg);
+    #root {
+      position: fixed;
+      inset: 0;
+      background: var(--color-window-bg);
+    }
   }
 
   @include dark {

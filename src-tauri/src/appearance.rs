@@ -67,7 +67,8 @@ pub struct SystemAppearance {
     /// The title sits after the window buttons rather than centred
     /// (macOS 26).
     pub title_leading: bool,
-    /// The window buttons of the header bar Newt draws itself.
+    /// The window buttons of the header bar Newt draws itself (GNOME);
+    /// `None` where the desktop gives the window its title bar.
     pub window_buttons: Option<WindowButtons>,
     pub color_scheme: Option<ColorScheme>,
     /// Mica shows through the window's chrome.
@@ -111,7 +112,7 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     // window is see-through so the page can round its own corners: GTK
     // rounds its frame but doesn't clip what's inside it.
     #[cfg(target_os = "linux")]
-    let builder = if platform::is_gnome() {
+    let builder = if platform::is_gnome_desktop() {
         builder.visible(false).transparent(true)
     } else {
         builder
@@ -120,8 +121,8 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
 }
 
 /// Finishes a window built with [`window_chrome`]: tells the page whenever
-/// the window becomes active or stops being so, and on GNOME has GTK keep
-/// the window's frame — shadow, rounded corners, resize edges — but draw no
+/// the window becomes active or stops being so, and on GNOME itself has GTK
+/// keep the window's frame — shadow, rounded corners, resize edges — but draw no
 /// title bar, Newt's header bar standing in for it. Shows the window if
 /// `visible` where [`window_chrome`] hid it.
 pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
@@ -129,7 +130,7 @@ pub(crate) fn window_built(window: &tauri::WebviewWindow, visible: bool) {
     let result = window.run_on_main_thread(move || {
         platform::watch_activation(&target);
         #[cfg(target_os = "linux")]
-        if platform::is_gnome() {
+        if platform::is_gnome_desktop() {
             match target.gtk_window() {
                 Ok(gtk_window) => platform::frame_only(&gtk_window, &target),
                 Err(e) => log::warn!("no GTK window for the header bar: {e}"),
@@ -162,11 +163,11 @@ pub fn is_window_active(webview_window: tauri::WebviewWindow) -> bool {
     platform::is_active(&webview_window)
 }
 
-/// Whether Newt draws the window's title bar as a header bar (GNOME), whose
-/// primary menu stands in for a viewer's or editor's menu bar.
+/// Whether Newt draws the window's title bar as a header bar (GNOME itself),
+/// whose primary menu stands in for a viewer's or editor's menu bar.
 pub(crate) fn draws_header_bar() -> bool {
     #[cfg(target_os = "linux")]
-    let gnome = platform::is_gnome();
+    let gnome = platform::is_gnome_desktop();
     #[cfg(not(target_os = "linux"))]
     let gnome = false;
     gnome
@@ -546,8 +547,19 @@ mod platform {
 
     /// KDE by `XDG_CURRENT_DESKTOP`; every other desktop gets the GNOME look.
     pub(super) fn is_gnome() -> bool {
-        !std::env::var("XDG_CURRENT_DESKTOP")
-            .is_ok_and(|v| v.split(':').any(|d| d.eq_ignore_ascii_case("kde")))
+        !current_desktop_is("kde")
+    }
+
+    /// GNOME itself, where Newt draws a header bar. Elsewhere the window
+    /// keeps the title bar the desktop gives it: the window manager's, or
+    /// on a Wayland compositor that draws none, GTK's own.
+    pub(super) fn is_gnome_desktop() -> bool {
+        current_desktop_is("gnome")
+    }
+
+    fn current_desktop_is(name: &str) -> bool {
+        std::env::var("XDG_CURRENT_DESKTOP")
+            .is_ok_and(|v| v.split(':').any(|d| d.eq_ignore_ascii_case(name)))
     }
 
     pub(super) fn read() -> SystemAppearance {
@@ -562,10 +574,12 @@ mod platform {
                 .as_ref()
                 .and_then(|s| string(s, "font-name"))
                 .and_then(|name| pango_font(&name));
-            let buttons = settings("org.gnome.desktop.wm.preferences")
-                .and_then(|s| string(&s, "button-layout"))
-                .map(|layout| super::button_layout(&layout))
-                .unwrap_or_else(super::default_buttons);
+            let buttons = is_gnome_desktop().then(|| {
+                settings("org.gnome.desktop.wm.preferences")
+                    .and_then(|s| string(&s, "button-layout"))
+                    .map(|layout| super::button_layout(&layout))
+                    .unwrap_or_else(super::default_buttons)
+            });
             SystemAppearance {
                 platform: PlatformStyle::Gnome,
                 accent,
@@ -573,7 +587,7 @@ mod platform {
                 font_points: font.map(|f| f.1),
                 titlebar_height: None,
                 title_leading: false,
-                window_buttons: Some(buttons),
+                window_buttons: buttons,
                 color_scheme: None,
                 mica: false,
             }

@@ -46,6 +46,12 @@ const TITLEBAR: Partial<Record<PlatformStyle, number>> = {
   gnome: 46,
 };
 
+/// Whether Newt draws a header bar: on GNOME itself, which Rust tells by
+/// handing over its window buttons. The GNOME look elsewhere keeps the
+/// desktop's title bar.
+export const drawsHeaderBar = (a: SystemAppearance = current) =>
+  a.platform === "gnome" && a.window_buttons !== null;
+
 const SCHEME_PROPERTIES: Record<
   Exclude<keyof ColorScheme, "dark">,
   `--scheme-${string}`
@@ -96,13 +102,16 @@ export function fontSize(a: SystemAppearance = current): number {
 }
 
 function titlebarHeight(): number {
-  if (fullscreen) return 0;
+  if (fullscreen || (current.platform === "gnome" && !drawsHeaderBar())) {
+    return 0;
+  }
   return current.titlebar_height ?? TITLEBAR[current.platform] ?? 0;
 }
 
 function apply() {
   const root = document.documentElement;
   root.dataset.platform = current.platform;
+  root.toggleAttribute("data-header-bar", drawsHeaderBar());
   if (current.mica) root.dataset.backdrop = "mica";
   else delete root.dataset.backdrop;
   const set = (name: string, value: string | null | undefined) =>

@@ -4553,7 +4553,8 @@ titlebar_height: number | null;
  */
 title_leading: boolean; 
 /**
- * The window buttons of the header bar Newt draws itself.
+ * The window buttons of the header bar Newt draws itself (GNOME);
+ * `None` where the desktop gives the window its title bar.
  */
 window_buttons: WindowButtons | null; color_scheme: ColorScheme | null; 
 /**
