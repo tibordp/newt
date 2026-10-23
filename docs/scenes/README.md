@@ -5,20 +5,23 @@ they can be regenerated whenever the UI changes:
 
 ```sh
 npx playwright install webkit   # once
-npm run screenshots             # every scene, light and dark
+npm run screenshots             # every scene, light and dark, macOS, Windows and GNOME
 npm run screenshots -- terminal editor --scheme dark
-npm run screenshots -- settings --platform gnome
+npm run screenshots -- settings --platform gnome,kde
+npm run screenshots -- --platform all
 ```
 
-PNGs land in `docs/screenshots/` (`<scene>.png`, `<scene>-dark.png`; `--out`
-to change) at 2×, in window chrome with its shadow on a transparent
-background. `--platform` (`macos`, the default, `windows`, `gnome` or `kde`)
-picks the platform look and its chrome, and adds the platform to the file
-names; only the fonts installed on the machine are used, so off macOS's own
+PNGs land in a folder per platform under `docs/screenshots/`
+(`macos/<scene>.png`, `macos/<scene>-dark.png`, …; `--out` to change) at 2×,
+in window chrome with its shadow on a transparent background. `--platform`
+takes a comma-separated list of `macos`, `windows`, `gnome` and `kde`, or
+`all`; by default every platform but KDE. Each renders its platform's look and
+chrome; only the fonts installed on the machine are used, so off macOS's own
 the text is in a stand-in. That folder isn't committed. The one shot that is, the README's
 `docs/screenshot.png`, is the light `pack-to-s3`, copied there whenever a run
 into the default folder renders it. Run it on a Mac: default preferences, and
-with them the rendered shortcuts, are exported from Rust for the host platform.
+with them the rendered shortcuts, are exported from Rust for the host platform,
+so every platform's shots show the Mac's shortcuts.
 Captures run in parallel, half as many at once as the machine has cores;
 `--jobs N` sets it.
 

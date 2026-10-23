@@ -3,7 +3,7 @@
 // See docs/scenes/README.md.
 //
 //   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark]
-//     [--platform macos|windows|gnome|kde] [--jobs N]
+//     [--platform macos,windows,gnome,kde|all] [--jobs N]
 //
 // Needs Playwright's WebKit once: `npx playwright install webkit`.
 
@@ -24,15 +24,25 @@ const defaultOut = join(root, "docs", "screenshots");
 const hero = { name: "pack-to-s3", scheme: "light" };
 const heroPath = join(root, "docs", "screenshot.png");
 
+const PLATFORMS = ["macos", "windows", "gnome", "kde"];
+
 const { values: opts, positionals: only } = parseArgs({
   allowPositionals: true,
   options: {
     out: { type: "string", default: defaultOut },
     scheme: { type: "string" },
-    platform: { type: "string", default: "macos" },
+    platform: { type: "string", default: "macos,windows,gnome" },
     jobs: { type: "string" },
   },
 });
+
+const platforms =
+  opts.platform === "all" ? PLATFORMS : opts.platform.split(",");
+const unknownPlatforms = platforms.filter((p) => !PLATFORMS.includes(p));
+if (unknownPlatforms.length) {
+  console.error(`unknown platform(s): ${unknownPlatforms.join(", ")}`);
+  process.exit(1);
+}
 
 // Default preferences come from Rust so shortcuts, columns and every other
 // default match the app. Keybinding defaults are per-platform: the macOS
@@ -68,7 +78,9 @@ const server = await createServer({
 await server.listen();
 const base = server.resolvedUrls.local[0];
 const browser = await webkit.launch();
-mkdirSync(opts.out, { recursive: true });
+for (const platform of platforms) {
+  mkdirSync(join(opts.out, platform), { recursive: true });
+}
 
 let failed = false;
 try {
@@ -82,16 +94,18 @@ try {
     throw new Error(`unknown scene(s): ${unknown.join(", ")}`);
 
   const jobs = [];
-  for (const [name, { schemes }] of Object.entries(scenes)) {
-    if (only.length && !only.includes(name)) continue;
-    for (const scheme of schemes) {
-      if (opts.scheme && scheme !== opts.scheme) continue;
-      const platform = opts.platform === "macos" ? "" : `-${opts.platform}`;
-      const out = join(
-        opts.out,
-        `${name}${platform}${scheme === "dark" ? "-dark" : ""}.png`,
-      );
-      jobs.push({ name, scheme, out });
+  for (const platform of platforms) {
+    for (const [name, { schemes }] of Object.entries(scenes)) {
+      if (only.length && !only.includes(name)) continue;
+      for (const scheme of schemes) {
+        if (opts.scheme && scheme !== opts.scheme) continue;
+        const out = join(
+          opts.out,
+          platform,
+          `${name}${scheme === "dark" ? "-dark" : ""}.png`,
+        );
+        jobs.push({ name, scheme, platform, out });
+      }
     }
   }
 
@@ -104,14 +118,14 @@ try {
   await Promise.all(
     Array.from({ length: workers }, async () => {
       while (next < jobs.length) {
-        const { name, scheme, out } = jobs[next++];
+        const { name, scheme, platform, out } = jobs[next++];
         try {
-          await capture(name, scheme, out);
+          await capture(name, scheme, platform, out);
           console.log(`✓ ${out}`);
           if (
             name === hero.name &&
             scheme === hero.scheme &&
-            opts.platform === "macos" &&
+            platform === "macos" &&
             resolve(opts.out) === defaultOut
           ) {
             copyFileSync(out, heroPath);
@@ -119,7 +133,7 @@ try {
           }
         } catch (e) {
           failed = true;
-          console.error(`✗ ${name} (${scheme}): ${e.message}`);
+          console.error(`✗ ${name} (${platform}, ${scheme}): ${e.message}`);
         }
       }
     }),
@@ -130,7 +144,7 @@ try {
 }
 process.exit(failed ? 1 : 0);
 
-async function capture(name, scheme, out) {
+async function capture(name, scheme, platform, out) {
   const context = await browser.newContext({
     viewport: { width: 1600, height: 1200 },
     deviceScaleFactor: 2,
@@ -148,7 +162,7 @@ async function capture(name, scheme, out) {
     await page.goto(
       new URL(
         `docs/scenes/frame.html?scene=${encodeURIComponent(name)}` +
-          `&platform=${encodeURIComponent(opts.platform)}`,
+          `&platform=${encodeURIComponent(platform)}`,
         base,
       ).href,
     );
