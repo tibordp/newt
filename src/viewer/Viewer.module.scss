@@ -32,9 +32,9 @@
 
   pre,
   .viewerGutter {
-    font-family: monospace;
-    font-size: 13px;
-    line-height: 18px;
+    font-family: var(--viewer-font);
+    font-size: var(--viewer-font-size);
+    line-height: var(--viewer-line-height);
   }
 }
 
@@ -47,7 +47,7 @@
 
 .gutterLine {
   white-space: pre;
-  height: 18px;
+  height: var(--viewer-line-height);
   text-align: right;
   padding-right: 1ch;
 }
@@ -61,7 +61,7 @@
 
 .viewerLine {
   white-space: pre;
-  height: 18px;
+  height: var(--viewer-line-height);
 }
 
 .hexAscii {
@@ -88,9 +88,9 @@
 .hexOffsetCol,
 .hexBytesCol,
 .hexAsciiCol {
-  font-family: monospace;
-  font-size: 13px;
-  line-height: 18px;
+  font-family: var(--viewer-font);
+  font-size: var(--viewer-font-size);
+  line-height: var(--viewer-line-height);
   white-space: pre;
 }
 
@@ -115,7 +115,7 @@
 }
 
 .hexRow {
-  height: 18px;
+  height: var(--viewer-line-height);
 }
 
 .viewerStatus {

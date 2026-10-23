@@ -3,6 +3,7 @@ import { useFormatBytes } from "../lib/size";
 
 import { commands, type EditorState } from "../lib/bindings";
 import { rawCommands, safeSilent, unwrap, unwrapBytes } from "../lib/ipc";
+import { useMonospaceFont } from "../lib/monospace";
 import { usePreferences } from "../lib/preferences";
 import { useScopedBindings } from "../lib/scopedBindings";
 import { monacoKeybinding } from "./monacoKeys";
@@ -270,6 +271,7 @@ function Editor() {
   // fallback; Monaco preventDefaults what it handles, so the two never
   // double-fire.
   const preferences = usePreferences();
+  const font = useMonospaceFont("editor");
   const saveKeys =
     preferences?.commands
       .find((c) => c.id === "editor_save")
@@ -382,8 +384,9 @@ function Editor() {
           theme={isDark ? "vs-dark" : "vs"}
           onMount={handleEditorMount}
           options={{
-            fontSize: 13,
-            lineHeight: 18,
+            fontFamily: font.family,
+            fontSize: font.size,
+            lineHeight: font.lineHeight,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
             automaticLayout: true,

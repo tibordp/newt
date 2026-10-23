@@ -36,6 +36,7 @@ import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 import { useEmbeddedCopy, useViewerHost } from "./host";
+import { useMonospaceFont } from "../lib/monospace";
 import { useWheelScroll } from "../lib/useWheelScroll";
 
 interface TextPosition {
@@ -148,7 +149,8 @@ export function TextViewer({
   const textPreRef = useRef<HTMLPreElement>(null);
   const [topRow, setTopRow] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
-  const lineHeight = 18;
+  const font = useMonospaceFont("viewer");
+  const { lineHeight } = font;
 
   // Selection state
   const [selection, setSelection] = useState<TextSelection | null>(null);
@@ -807,6 +809,7 @@ export function TextViewer({
   return (
     <div
       className={styles.viewer}
+      style={font.style}
       ref={viewerRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}

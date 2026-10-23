@@ -800,7 +800,9 @@ When an operation encounters a conflict:
 
 ## 5. File Viewer (F3)
 
-Opens in a separate window (1100×800 by default; with `behavior.restore_window_geometry` the size last used, centred). Identifies the file from its content and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
+Opens in a separate window (1100×800 by default; with `behavior.restore_window_geometry` the size last used, centred). Identifies the file from its content and selects the appropriate viewing mode.
+
+Text and Hex modes and Structure's bytes pane are set in `viewer.font_family` at `viewer.font_size` pixels (default 13, rows 1.4 times as tall), by default each platform's own monospace font, the same list as the terminal's; Structure's tree shows its numbers, offsets and raw values in the same font at its own size. Changes in Settings apply at once, Quick View included. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
 
 ### Pre-warmed Windows
 
@@ -1109,7 +1111,7 @@ The language comes from [file associations](#file-associations); the built-in on
 - **Line numbers**: Always visible.
 - **Find and replace**: Monaco's own keys — Ctrl+F / Ctrl+H, on macOS Cmd+F / Cmd+Option+F. These aren't Newt commands and can't be rebound.
 - **Undo/redo**: Ctrl+Z / Ctrl+Y (Cmd+Z / Cmd+Shift+Z on macOS), likewise Monaco's.
-- **Font**: 13px, 18px line height.
+- **Font**: `editor.font_family` at `editor.font_size` pixels (default 13), a line height of 1.4 times the size (18px at 13). By default each platform's own monospace font, the same list as the terminal's. Changes in Settings apply to open editors at once.
 - **Minimap**: Disabled.
 - **Render whitespace**: Only in selection.
 - **Theme**: Follows the app theme (`appearance.theme` — the OS's when that is `system`), live.
@@ -1965,9 +1967,13 @@ font_size = 12              # Pixels (6–72); default 13 on Linux
 scrollback = 1000           # Lines kept above the screen (0–1,000,000)
 
 [editor]
+font_family = 'Menlo, Monaco, "Courier New", monospace'  # CSS font-family list; the first installed font is used. Default per platform, as [terminal]'s
+font_size = 13              # Pixels (6–72)
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
 [viewer]
+font_family = 'Menlo, Monaco, "Courier New", monospace'  # Text and Hex modes, Structure's bytes and values; CSS font-family list. Default per platform, as [terminal]'s
+font_size = 13              # Pixels (6–72): Text and Hex modes and Structure's bytes
 image_background = "checkerboard" # Backdrop behind images: "checkerboard", "dark", "light"
 alternate_mode = "dissect"  # What F3 switches to (except from Hex, Table, Markdown): "dissect" (Structure), "hex"
 
