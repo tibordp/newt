@@ -7,7 +7,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-menu);
   box-shadow: var(--shadow-dialog);
-  padding: 4px;
+  padding: var(--menu-padding);
   z-index: 300;
   min-width: 180px;
 }
@@ -29,7 +29,7 @@
   &[data-highlighted],
   &[data-state="open"],
   &[role="option"][aria-selected="true"] {
-    background: var(--color-highlight-bg);
+    background: var(--color-menu-highlight-bg);
     color: var(--color-highlight-fg);
     outline: none;
     @include fc.selected;

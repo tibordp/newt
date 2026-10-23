@@ -92,8 +92,14 @@
   --radius-menu-item: 7px;
   --menu-item-height: 24px;
   // Text and icons start 16px in from the menu's edge, the separators
-  // with them.
-  --menu-item-padding-x: 11px;
+  // with them; the highlight is the accent let through by a fifth.
+  --menu-padding: 5px;
+  --menu-item-padding-x: 10px;
+  --color-menu-highlight-bg: color-mix(
+    in srgb,
+    var(--color-accent) 80%,
+    transparent
+  );
   --menu-separator-gap: 5px;
   --menu-separator-inset: var(--menu-item-padding-x);
 
