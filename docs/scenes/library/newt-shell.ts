@@ -12,11 +12,17 @@ import type { Scene } from "../types";
 const prompt = shellPrompt(`${PROJECT}/src`, "main");
 
 const selected = ["cli.rs", "filter.rs", "walk.rs"];
+const columns = docsColumns(1100);
 
 const scene: Scene = {
   description: "Driving the panes from the shell with the newt command",
   size: { width: 1100, height: 600 },
-  ...docsColumns(1100),
+  ...columns,
+  // The panes are the point; the terminal only needs its few lines.
+  runtimeState: (state) => {
+    columns.runtimeState(state);
+    state.layout = { ...state.layout, terminal_height: 160 };
+  },
   window: "main",
   state: mainWindow({
     terminals: [1],

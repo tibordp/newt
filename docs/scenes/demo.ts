@@ -18,7 +18,7 @@ import {
   mainWindow,
   pane,
 } from "./builders";
-import { OS, localDisplay } from "./platform";
+import { OS, PLATFORM, localDisplay } from "./platform";
 
 export const HOME = "/Users/demo";
 
@@ -94,8 +94,16 @@ export function docsColumns(windowWidth: number) {
   const time = 100;
   const date = 90;
   const size = 96;
-  // Each pane gets half the window, less the divider and the scrollbar gutter.
-  const name = Math.floor(windowWidth / 2) - time - date - size - 16;
+  // Each pane gets half the window. A row is its columns plus 20px after
+  // them and the look's `--row-padding-start` before; Windows' scroll bars
+  // take room of their own (`_platform.scss`), the others overlay the list.
+  const paddingStart = PLATFORM === "macos" || PLATFORM === "gnome" ? 2 : 0;
+  const scrollbar = OS === "windows" ? 12 : 0;
+  const name =
+    Math.floor(windowWidth / 2) -
+    (time + date + size) -
+    (20 + paddingStart) -
+    scrollbar;
   const widths = { name, size, modified_date: date, modified_time: time };
   return {
     preferences: (prefs: ResolvedPreferences) => {
