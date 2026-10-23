@@ -1,4 +1,4 @@
-.titleBar,
+// The title centred on the window, whatever the buttons either side take.
 .headerBar {
   position: fixed;
   top: 0;
@@ -8,48 +8,16 @@
   background: var(--color-titlebar);
   color: var(--color-titlebar-fg);
   z-index: 1;
-
-  :global(:root[data-window-inactive]) & {
-    background: var(--color-titlebar-backdrop);
-    color: var(--color-titlebar-fg-backdrop);
-  }
-}
-
-.titleBar {
-  user-select: none;
-}
-
-.macTitle,
-.macTitleLeading {
-  position: absolute;
-  top: 0;
-  line-height: var(--titlebar-height);
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-// Centred on the window, clear of the traffic lights either side.
-.macTitle {
-  left: 80px;
-  right: 80px;
-  text-align: center;
-}
-
-// After the traffic lights.
-.macTitleLeading {
-  left: 85px;
-  right: var(--space-6);
-}
-
-// The title centred on the window, whatever the buttons either side take.
-.headerBar {
   display: grid;
   grid-template-columns: 1fr minmax(0, auto) 1fr;
   align-items: center;
   padding: 0 var(--space-3);
   user-select: none;
+
+  :global(:root[data-window-inactive]) & {
+    background: var(--color-titlebar-backdrop);
+    color: var(--color-titlebar-fg-backdrop);
+  }
 }
 
 .start,

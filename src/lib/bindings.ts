@@ -4544,15 +4544,6 @@ accent: string | null; font_family: string | null;
  */
 font_points: number | null; 
 /**
- * The title bar the window's content is drawn under, in CSS pixels.
- */
-titlebar_height: number | null; 
-/**
- * The title sits after the window buttons rather than centred
- * (macOS 26).
- */
-title_leading: boolean; 
-/**
  * The window buttons of the header bar Newt draws itself (GNOME);
  * `None` where the desktop gives the window its title bar.
  */

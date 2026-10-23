@@ -39,12 +39,8 @@ const DEFAULT_POINTS: Partial<Record<PlatformStyle, number>> = {
   kde: 10,
 };
 
-/// Title bar heights where Rust measured none: macOS's before Tahoe, and
-/// the header bar Newt draws on GNOME.
-const TITLEBAR: Partial<Record<PlatformStyle, number>> = {
-  macos: 28,
-  gnome: 46,
-};
+/// The header bar Newt draws on GNOME, which the page lays out under.
+const HEADER_BAR_HEIGHT = 46;
 
 /// Whether Newt draws a header bar: on GNOME itself, which Rust tells by
 /// handing over its window buttons. The GNOME look elsewhere keeps the
@@ -82,8 +78,6 @@ function fallback(): SystemAppearance {
     accent: null,
     font_family: null,
     font_points: null,
-    titlebar_height: null,
-    title_leading: false,
     window_buttons: null,
     color_scheme: null,
     mica: false,
@@ -102,10 +96,7 @@ export function fontSize(a: SystemAppearance = current): number {
 }
 
 function titlebarHeight(): number {
-  if (fullscreen || (current.platform === "gnome" && !drawsHeaderBar())) {
-    return 0;
-  }
-  return current.titlebar_height ?? TITLEBAR[current.platform] ?? 0;
+  return drawsHeaderBar() && !fullscreen ? HEADER_BAR_HEIGHT : 0;
 }
 
 function apply() {

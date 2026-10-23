@@ -85,17 +85,14 @@ function useCommandRunner(): CommandRunner | null {
   );
 }
 
-/// The window's own title bar, where Newt draws one. macOS draws the
-/// traffic lights over the top of the page, on the strip this leaves for
-/// them; on GNOME this is the whole header bar, GTK keeping only the
-/// window's frame. Window chrome is the one place a component follows the
-/// platform: Windows, KDE and the GNOME look on other desktops have the
+/// The header bar Newt draws on GNOME, GTK keeping only the window's
+/// frame. Window chrome is the one place a component follows the platform:
+/// macOS, Windows, KDE and the GNOME look on other desktops have the
 /// system's own title bar.
 export function TitleBar() {
   const appearance = useAppearance();
-  const { platform, window_buttons, title_leading } = appearance;
   const fullscreen = useFullscreen();
-  const drawn = platform === "macos" || drawsHeaderBar(appearance);
+  const drawn = drawsHeaderBar(appearance);
 
   useEffect(() => {
     if (!drawn) return;
@@ -108,28 +105,8 @@ export function TitleBar() {
     };
   }, [drawn]);
 
-  if (!drawn || fullscreen) return null;
-  if (drawsHeaderBar(appearance)) {
-    return <HeaderBar buttons={window_buttons ?? { start: [], end: [] }} />;
-  }
-  return <MacTitleBar leading={title_leading} />;
-}
-
-/// macOS's own title sits in a view above the page, which doesn't move the
-/// window; the page draws it on its strip instead — after the traffic
-/// lights on macOS 26, centred before.
-function MacTitleBar({ leading }: { leading: boolean }) {
-  const title = useWindowTitle();
-  return (
-    <div className={styles.titleBar} data-tauri-drag-region>
-      <span
-        className={leading ? styles.macTitleLeading : styles.macTitle}
-        data-tauri-drag-region
-      >
-        {title}
-      </span>
-    </div>
-  );
+  if (!drawn || fullscreen || !appearance.window_buttons) return null;
+  return <HeaderBar buttons={appearance.window_buttons} />;
 }
 
 function HeaderBar({ buttons }: { buttons: WindowButtons }) {

@@ -30,7 +30,8 @@
   --color-chrome-fg: #6e6e6e;
   --color-bg: #ffffff;
   --color-chrome: #ececec;
-  --color-chrome-light: #f7f7f7;
+  // The title bar's colour, which the pane headers run on from.
+  --color-chrome-light: #ffffff;
   --color-surface: #f2f2f2;
   --color-separator: rgba(0, 0, 0, 0.1);
   --color-border: rgba(0, 0, 0, 0.12);
@@ -82,9 +83,6 @@
     0 18px 50px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
   --font-size-title: var(--font-size-base);
   --font-weight-title: 700;
-
-  --color-titlebar-fg: #595959;
-  --color-titlebar-fg-backdrop: #b2b2b2;
 
   --color-menu-bg: rgba(246, 246, 246, 0.94);
   --menu-backdrop: blur(24px) saturate(1.8);
@@ -139,9 +137,6 @@
     --color-dialog-border: rgba(255, 255, 255, 0.14);
     --shadow-dialog:
       0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
-
-    --color-titlebar-fg: #a6a6a6;
-    --color-titlebar-fg-backdrop: #616161;
 
     --color-menu-bg: rgba(42, 42, 42, 0.94);
   }

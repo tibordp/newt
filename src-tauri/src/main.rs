@@ -1212,7 +1212,6 @@ fn main() {
         .manage(global_ctx)
         .manage(window_menu::WindowMenus::default())
         .setup(move |app| {
-            appearance::init();
             if let Ok(dir) = app.path().app_log_dir() {
                 crash_report::install(dir);
             }

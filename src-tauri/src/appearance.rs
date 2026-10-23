@@ -62,11 +62,6 @@ pub struct SystemAppearance {
     pub font_family: Option<String>,
     /// The UI font's size, in points.
     pub font_points: Option<f64>,
-    /// The title bar the window's content is drawn under, in CSS pixels.
-    pub titlebar_height: Option<f64>,
-    /// The title sits after the window buttons rather than centred
-    /// (macOS 26).
-    pub title_leading: bool,
     /// The window buttons of the header bar Newt draws itself (GNOME);
     /// `None` where the desktop gives the window its title bar.
     pub window_buttons: Option<WindowButtons>,
@@ -91,12 +86,6 @@ pub(crate) fn window_chrome<'a, M: tauri::Manager<tauri::Wry>>(
     builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, M>,
 ) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, M> {
     let builder = builder.initialization_script(initialization_script());
-    // The page draws the title, in the strip that moves the window: macOS's
-    // own sits in a view above the page, which doesn't.
-    #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
     #[cfg(windows)]
     let builder = if platform::mica() {
         builder
@@ -173,12 +162,6 @@ pub(crate) fn draws_header_bar() -> bool {
     gnome
 }
 
-/// Records what can only be read on the main thread; called from `setup`.
-pub(crate) fn init() {
-    #[cfg(target_os = "macos")]
-    platform::init();
-}
-
 #[tauri::command]
 #[specta::specta]
 pub fn get_system_appearance() -> SystemAppearance {
@@ -210,15 +193,9 @@ fn hex(r: f64, g: f64, b: f64) -> String {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::sync::OnceLock;
-
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSColor, NSColorSpace, NSWindow, NSWindowStyleMask};
-    use objc2_foundation::{NSPoint, NSProcessInfo, NSRect, NSSize};
+    use objc2_app_kit::{NSColor, NSColorSpace};
 
     use super::{PlatformStyle, SystemAppearance, hex};
-
-    static TITLEBAR_HEIGHT: OnceLock<f64> = OnceLock::new();
 
     /// The key window is the active one.
     pub(super) fn watch_activation(window: &tauri::WebviewWindow) {
@@ -239,14 +216,6 @@ mod platform {
         window.is_focused().unwrap_or(true)
     }
 
-    pub(super) fn init() {
-        let mtm = MainThreadMarker::new().expect("appearance::init runs on the main thread");
-        let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(100.0, 100.0));
-        let frame =
-            NSWindow::frameRectForContentRect_styleMask(content, NSWindowStyleMask::Titled, mtm);
-        let _ = TITLEBAR_HEIGHT.set(frame.size.height - content.size.height);
-    }
-
     pub(super) fn read() -> SystemAppearance {
         let accent = NSColor::controlAccentColor()
             .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
@@ -256,11 +225,6 @@ mod platform {
             accent,
             font_family: None,
             font_points: None,
-            titlebar_height: TITLEBAR_HEIGHT.get().copied(),
-            title_leading: NSProcessInfo::processInfo()
-                .operatingSystemVersion()
-                .majorVersion
-                >= 26,
             window_buttons: None,
             color_scheme: None,
             mica: false,
@@ -347,8 +311,6 @@ mod platform {
             accent,
             font_family: None,
             font_points: None,
-            titlebar_height: None,
-            title_leading: false,
             window_buttons: None,
             color_scheme: None,
             mica: mica(),
@@ -585,8 +547,6 @@ mod platform {
                 accent,
                 font_family: font.as_ref().map(|f| f.0.clone()),
                 font_points: font.map(|f| f.1),
-                titlebar_height: None,
-                title_leading: false,
                 window_buttons: buttons,
                 color_scheme: None,
                 mica: false,
@@ -599,8 +559,6 @@ mod platform {
                 accent: globals.accent,
                 font_family: globals.font.as_ref().map(|f| f.0.clone()),
                 font_points: globals.font.map(|f| f.1),
-                titlebar_height: None,
-                title_leading: false,
                 window_buttons: None,
                 color_scheme: globals.scheme,
                 mica: false,

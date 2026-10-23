@@ -83,20 +83,10 @@ body {
   display: none;
 }
 
-/* macOS 26: the title bar overlays the app, which draws the strip under
-   it; the lights and title lead. */
+/* macOS 26: the lights and the title lead. */
 .window.macos {
   --window-radius: 16px;
   --titlebar-height: 32px;
-}
-
-.macos .titlebar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  pointer-events: none;
 }
 
 .macos .lights {
@@ -122,9 +112,9 @@ body {
   background: #34c759;
 }
 
-/* The app draws the title itself, on its strip. */
 .macos .title {
-  display: none;
+  margin-left: 16px;
+  font-weight: 700;
 }
 
 /* Windows 11: Mica title bar, the title leading, caption buttons

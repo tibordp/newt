@@ -40,10 +40,9 @@ function menuBar(scene: Scene): string[] {
   ];
 }
 
-/// Title bars the app draws itself, which its frame takes in: the strip
-/// under macOS's title bar, GNOME's header bar (none of the frame's own).
+/// Title bars the app draws itself, which its frame takes in: GNOME's
+/// header bar (none of the frame's own).
 const DRAWN_TITLEBAR: Record<string, number> = {
-  macos: 32,
   gnome: 46,
 };
 
