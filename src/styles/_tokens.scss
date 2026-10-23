@@ -147,6 +147,10 @@
   --radius-menu: var(--radius-md);
   --radius-menu-item: var(--radius-sm);
   --menu-item-height: 28px;
+  --menu-item-padding-x: var(--space-4);
+  // Above and below a separator, and in from the menu's sides.
+  --menu-separator-gap: 4px;
+  --menu-separator-inset: 0px;
 
   // The title bar Newt draws: the strip under macOS's title and controls,
   // GNOME's header bar. Backdrop is while another window has the keyboard.

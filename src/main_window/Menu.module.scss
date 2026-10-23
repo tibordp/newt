@@ -17,7 +17,7 @@
   align-items: center;
   gap: var(--space-3);
   height: var(--menu-item-height);
-  padding: 0 var(--space-4);
+  padding: 0 var(--menu-item-padding-x);
   border-radius: var(--radius-menu-item);
   font: inherit;
   color: var(--color-fg);
@@ -58,12 +58,12 @@
 
 .separator {
   height: 1px;
-  margin: 4px 0;
+  margin: var(--menu-separator-gap) var(--menu-separator-inset);
   background: var(--color-border);
 }
 
 .sectionHeader {
-  padding: 4px 10px 2px;
+  padding: 4px var(--menu-item-padding-x) 2px;
   color: var(--color-fg-muted);
   font-size: 0.8em;
   font-weight: 600;

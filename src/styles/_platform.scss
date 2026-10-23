@@ -91,6 +91,11 @@
   --radius-menu: 12px;
   --radius-menu-item: 7px;
   --menu-item-height: 24px;
+  // Text and icons start 16px in from the menu's edge, the separators
+  // with them.
+  --menu-item-padding-x: 11px;
+  --menu-separator-gap: 5px;
+  --menu-separator-inset: var(--menu-item-padding-x);
 
   @include dark {
     --color-fg: #dddddd;
