@@ -145,6 +145,10 @@ body {
   margin-left: 7px;
 }
 
+.kde .icon {
+  margin-left: 6px;
+}
+
 .windows .title {
   margin-left: 5px;
   font-size: 12px;
@@ -250,8 +254,8 @@ body {
 
 .kde .controls {
   display: flex;
-  gap: 6px;
-  margin-right: 9px;
+  gap: 7px;
+  margin-right: 6px;
 }
 
 .kde .controls i {
@@ -259,20 +263,24 @@ body {
   place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-style: normal;
-  color: var(--title);
 }
 
-.kde .controls i:nth-child(1)::before {
-  content: "\2304";
+/* Breeze's glyphs: chevrons down and up, and a cross. */
+.kde .controls i::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: var(--title);
+  mask: var(--glyph) center / 12px 12px no-repeat;
 }
-.kde .controls i:nth-child(2)::before {
-  content: "\2303";
+.kde .controls i:nth-child(1) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M.5 3.5 6 9l5.5-5.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
 }
-.kde .controls i:nth-child(3)::before {
-  content: "\2715";
+.kde .controls i:nth-child(2) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M.5 8.5 6 3l5.5 5.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
+}
+.kde .controls i:nth-child(3) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1.75 1.75l8.5 8.5m0-8.5-8.5 8.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: dark) {
