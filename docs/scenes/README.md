@@ -16,9 +16,9 @@ PNGs land in a folder per platform under `docs/screenshots/`
 in window chrome with its shadow on a transparent background. `--platform`
 takes a comma-separated list of `macos`, `windows`, `gnome` and `kde`, or
 `all`; by default every platform but KDE. Each renders its platform's look and
-chrome, and the default preferences and shortcuts of its OS (GNOME and KDE
-share Linux's); only the fonts installed on the machine are used, so off
-macOS's own the text is in a stand-in. That folder isn't committed. The one
+chrome (a viewer's or editor's menu bar on Windows and KDE), the default
+preferences and shortcuts of its OS (GNOME and KDE share Linux's), its fonts,
+and its paths. That folder isn't committed. The one
 shot that is, the README's `docs/screenshot.png`, is the light `pack-to-s3`,
 copied there whenever a run into the default folder renders it.
 Captures run in parallel, half as many at once as the machine has cores;
@@ -48,6 +48,21 @@ state change leaves stale. On top of the state, a scene can carry:
 
 `builders.ts` fills in the tedious parts of the state: listings with `..`,
 sorting, stats and breadcrumbs, git annotations, operations.
+
+Scenes are written with macOS's paths, under the `demo` user's home
+(`demo.ts`). `platform.ts` makes the local ones the platform's: `/home/demo`
+and `/run/media/demo/...` on Linux; `C:\Users\demo`, drives for volumes and
+`C:\Logs` for `/var/log` on Windows, in the wire form `VfsPath`s carry
+(`/?/C:/Users/demo`). `pane` does it for local panes, breadcrumbs included,
+and the harness for everything else: `VfsPath`s on VFS 0, paths in text
+(dialogs, titles, terminal output), fixture keys and command results. A
+scene of a remote session sets `remote` and keeps its paths as written.
+`shellPrompt` is the demo shell's prompt: bash's, or PowerShell's on Windows.
+
+Each platform's fonts come from npm: Adwaita Sans and Mono for GNOME, Noto
+Sans and Hack for KDE, Cascadia Mono for Windows, with Open Sans standing in
+for Segoe UI, which isn't openly licensed (`fonts.ts`). macOS uses the
+system's.
 
 To author a scene, run `npm run dev` and open
 <http://localhost:1420/docs/scenes/frame.html>: it lists every scene and

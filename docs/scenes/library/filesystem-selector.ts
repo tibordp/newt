@@ -1,5 +1,6 @@
 import { behindDialog, docsColumns } from "../demo";
 import type { VfsTarget, VolumeKind } from "../../../src/lib/bindings";
+import { OS, localDisplay } from "../platform";
 import type { Scene } from "../types";
 
 const target_ = (fields: Partial<VfsTarget>): VfsTarget => ({
@@ -49,14 +50,20 @@ const scene: Scene = {
     context: { pane_handle: 0 },
     data: {
       targets: [
-        target_({ vfs_id: 0, detail: "/", available_bytes: 297_710_000_000 }),
+        target_({
+          vfs_id: 0,
+          detail: localDisplay("/"),
+          available_bytes: 297_710_000_000,
+        }),
         volume("Backup", "Removable", 1_204_000_000_000),
         volume("Walker 0.9", "DiskImage", 33_180_000),
         volume(
           "media",
           "Network",
           3_870_000_000_000,
-          "//demo@nas._smb._tcp.local/media",
+          OS === "windows"
+            ? "\\\\nas\\media"
+            : "//demo@nas._smb._tcp.local/media",
         ),
         target_({
           vfs_id: 1,

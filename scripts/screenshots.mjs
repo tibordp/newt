@@ -204,6 +204,9 @@ async function capture(name, scheme, platform, out) {
       console.warn(`  ${name}: unmocked ${unmocked.join(", ")}`);
     if (errors.length) throw new Error(errors.join("; "));
 
+    // Web fonts load as text first uses them.
+    await app.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => document.fonts.ready);
     await (
       await page.$(".backdrop")
     ).screenshot({ path: out, omitBackground: true });

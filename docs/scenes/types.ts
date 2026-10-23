@@ -51,6 +51,9 @@ type SceneCommon = {
   steps?: Step[];
   /// Defaults to both.
   schemes?: ("light" | "dark")[];
+  /// A remote session: its paths are the remote host's, kept as written on
+  /// every platform rather than made the platform's (`platform.ts`).
+  remote?: boolean;
 };
 
 export type Scene = SceneCommon &

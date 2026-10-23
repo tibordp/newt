@@ -21,6 +21,8 @@ import type {
   ViewerState,
 } from "../../src/lib/bindings";
 import { file } from "./builders";
+import { loadFonts } from "./fonts";
+import { PLATFORM, localWire, localize } from "./platform";
 import { scenes } from "./registry";
 import type { SceneStatus } from "./types";
 
@@ -109,7 +111,7 @@ const BREEZE = {
 /// frame draws, set up as it ships: default accent and font, GNOME's
 /// close-only button layout, Breeze in the scheme's own variant, Mica on.
 /// macOS 26's title bar is the one `frame.ts` draws over the app.
-const platform = (params.get("platform") ?? "macos") as PlatformStyle;
+const platform: PlatformStyle = PLATFORM;
 const dark = matchMedia("(prefers-color-scheme: dark)").matches;
 const appearance: SystemAppearance = {
   platform,
@@ -123,6 +125,7 @@ const appearance: SystemAppearance = {
   mica: platform === "windows",
 };
 window.__NEWT_APPEARANCE__ = appearance;
+await loadFonts(platform);
 /// GNOME and KDE share Linux's default preferences.
 const os = platform === "gnome" || platform === "kde" ? "linux" : platform;
 const defaultsUrl = `/target/scenes/defaults-${os}.json`;
@@ -147,7 +150,16 @@ scene.preferences?.(preferences);
 const runtimeState = defaults.runtime_state;
 scene.runtimeState?.(runtimeState);
 
-const state = structuredClone(scene.state);
+/// Scenes are written with macOS's paths, made the platform's here.
+const local = <T>(value: T): T => (scene.remote ? value : localize(value));
+const files = Object.fromEntries(
+  Object.entries(scene.files ?? {}).map(([path, fixture]) => [
+    scene.remote ? path : localWire(path),
+    fixture,
+  ]),
+);
+
+const state = local(structuredClone(scene.state));
 const event = { main: "main_window", viewer: "viewer", editor: "editor" }[
   scene.window
 ];
@@ -164,12 +176,12 @@ const publish = () => {
 
 let windowTitle = "";
 const reportTitle = (title: string) => {
-  windowTitle = scene.title ?? title;
+  windowTitle = local(scene.title) ?? title;
   window.parent.postMessage({ sceneTitle: windowTitle }, "*");
 };
 
 const fixture = (path: VfsPath) =>
-  scene.files?.[path.path] ?? fail(`no fixture for ${path.path}`);
+  files[path.path] ?? fail(`no fixture for ${path.path}`);
 
 const fixtureBytes = new Map<string, Promise<Uint8Array>>();
 /// `render_markdown`, with marked standing in for comrak; the fixtures are
@@ -370,7 +382,7 @@ const handlers: Record<string, (args: any) => unknown> = {
     return null;
   },
   terminal_resize: ({ handle }: { handle: number }) => {
-    const output = scene.window === "main" && scene.terminals?.[handle];
+    const output = scene.window === "main" && local(scene.terminals?.[handle]);
     if (output && terminalOutput && !terminalsWritten.has(handle)) {
       terminalsWritten.add(handle);
       const data = new TextEncoder().encode(output.replace(/\r?\n/g, "\r\n"));
@@ -385,7 +397,12 @@ const handlers: Record<string, (args: any) => unknown> = {
     status.errors.push(`error dialog: ${message}`);
     return null;
   },
-  ...scene.commands,
+  ...Object.fromEntries(
+    Object.entries(scene.commands ?? {}).map(([cmd, handler]) => [
+      cmd,
+      async (args: Record<string, unknown>) => local(await handler(args)),
+    ]),
+  ),
 };
 
 let inFlight = 0;
@@ -412,10 +429,12 @@ mockIPC(
   { shouldMockEvents: true },
 );
 
-if (scene.window === "main") reportTitle(scene.state.window_title);
+if (scene.window === "main") {
+  reportTitle((state as MainWindowState).window_title);
+}
 // Rust titles a viewer window when opening it; the webview never does.
 if (scene.window === "viewer") {
-  reportTitle(`${scene.state.display_path ?? ""} - Viewer`);
+  reportTitle(`${(state as ViewerState).display_path ?? ""} - Viewer`);
 }
 
 const frame = () => new Promise((r) => requestAnimationFrame(r));

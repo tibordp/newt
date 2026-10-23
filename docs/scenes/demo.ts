@@ -18,8 +18,19 @@ import {
   mainWindow,
   pane,
 } from "./builders";
+import { OS, localDisplay } from "./platform";
 
 export const HOME = "/Users/demo";
+
+/// The demo shell's prompt in `cwd`, written as on macOS: bash's with the
+/// git branch on macOS and Linux, PowerShell's on Windows.
+export function shellPrompt(cwd: string, branch?: string): string {
+  if (OS === "windows") return `PS ${localDisplay(cwd)}> `;
+  const E = "\x1b[";
+  const shown = cwd.startsWith(HOME) ? `~${cwd.slice(HOME.length)}` : cwd;
+  const git = branch ? ` ${E}33m(${branch})${E}0m` : "";
+  return `${E}1;32mdemo@studio${E}0m ${E}1;34m${shown}${E}0m${git} $ `;
+}
 export const PROJECT = `${HOME}/src/walker`;
 export const LOCAL_STATS = fsStats(gb(994.66), gb(297.71));
 

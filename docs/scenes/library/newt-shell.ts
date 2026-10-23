@@ -5,11 +5,11 @@ import {
   projectEntries,
   sourceEntries,
   docsColumns,
+  shellPrompt,
 } from "../demo";
 import type { Scene } from "../types";
 
-const E = "\x1b[";
-const prompt = `${E}1;32mdemo@studio${E}0m ${E}1;34m~/src/walker/src${E}0m ${E}33m(main)${E}0m $ `;
+const prompt = shellPrompt(`${PROJECT}/src`, "main");
 
 const selected = ["cli.rs", "filter.rs", "walk.rs"];
 

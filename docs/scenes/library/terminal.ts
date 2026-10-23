@@ -1,9 +1,9 @@
 import { at, dir, file, fsStats, gb, mainWindow, pane } from "../builders";
-import { docsColumns } from "../demo";
+import { HOME, docsColumns, shellPrompt } from "../demo";
 import type { Scene } from "../types";
 
 const E = "\x1b[";
-const prompt = `${E}1;32mdemo@studio${E}0m ${E}1;34m~/src/newt${E}0m ${E}33m(main)${E}0m $ `;
+const prompt = shellPrompt(`${HOME}/src/newt`, "main");
 
 const scene: Scene = {
   description: "Both panes above the integrated terminal, focus in the shell",

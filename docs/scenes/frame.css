@@ -166,6 +166,35 @@ body {
   content: "\2715";
 }
 
+/* The native menu bar of a viewer or editor: Win32's, in Segoe at 9pt,
+   and Breeze's in the header colour. */
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: var(--menubar-height);
+  background: var(--titlebar);
+  color: var(--title);
+  font-size: var(--menubar-font-size);
+  cursor: default;
+  user-select: none;
+}
+
+.menubar span {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--menubar-item-padding);
+}
+
+.window.windows {
+  --menubar-height: 20px;
+  --menubar-font-size: 12px;
+  --menubar-item-padding: 7px;
+}
+
+.windows .menubar {
+  padding-left: 1px;
+}
+
 /* GNOME: GTK draws the frame — rounded corners, a shadow — and the app its
    own header bar. */
 .window.gnome {
@@ -186,6 +215,16 @@ body {
   --titlebar: #dee0e2;
   --title: #232629;
   font-family: "Noto Sans", system-ui, sans-serif;
+}
+
+.window.kde {
+  --menubar-height: 26px;
+  --menubar-font-size: 13.33px;
+  --menubar-item-padding: 8px;
+}
+
+.kde .menubar {
+  padding-left: 2px;
 }
 
 .kde .title {
