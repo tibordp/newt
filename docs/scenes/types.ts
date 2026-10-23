@@ -8,7 +8,9 @@ import type {
 } from "../../src/lib/bindings";
 
 /// Performed by the runner with Playwright, in order, once the scene has
-/// rendered. Keys use Playwright's names ("Meta+F", "ArrowDown").
+/// rendered. Keys use Playwright's names ("Shift+F2", "ArrowDown"), plus
+/// "Mod" for the platform's command modifier: Meta on macOS, Control
+/// elsewhere.
 export type Step =
   | { press: string }
   | { type: string }
@@ -49,6 +51,9 @@ type SceneCommon = {
   steps?: Step[];
   /// Defaults to both.
   schemes?: ("light" | "dark")[];
+  /// A remote session: its paths are the remote host's, kept as written on
+  /// every platform rather than made the platform's (`platform.ts`).
+  remote?: boolean;
 };
 
 export type Scene = SceneCommon &

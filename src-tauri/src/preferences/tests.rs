@@ -8,33 +8,25 @@ use crate::preferences::schema::*;
 
 #[test]
 fn expand_mod_replaces_mod_prefix() {
-    let result = expand_mod("mod+a");
-    // On non-macOS, mod -> ctrl; on macOS, mod -> meta
-    if cfg!(target_os = "macos") {
-        assert_eq!(result, "meta+a");
-    } else {
-        assert_eq!(result, "ctrl+a");
-    }
+    assert_eq!(expand_mod("mod+a", Platform::Macos), "meta+a");
+    assert_eq!(expand_mod("mod+a", Platform::Windows), "ctrl+a");
+    assert_eq!(expand_mod("mod+a", Platform::Linux), "ctrl+a");
 }
 
 #[test]
 fn expand_mod_replaces_mod_in_middle() {
-    let result = expand_mod("shift+mod+a");
-    if cfg!(target_os = "macos") {
-        assert_eq!(result, "shift+meta+a");
-    } else {
-        assert_eq!(result, "shift+ctrl+a");
-    }
+    assert_eq!(expand_mod("shift+mod+a", Platform::Macos), "shift+meta+a");
+    assert_eq!(expand_mod("shift+mod+a", Platform::Linux), "shift+ctrl+a");
 }
 
 #[test]
 fn expand_mod_lowercases() {
-    assert_eq!(expand_mod("Ctrl+Shift+A"), "ctrl+shift+a");
+    assert_eq!(expand_mod("Ctrl+Shift+A", Platform::HOST), "ctrl+shift+a");
 }
 
 #[test]
 fn expand_mod_no_mod() {
-    assert_eq!(expand_mod("ctrl+shift+f5"), "ctrl+shift+f5");
+    assert_eq!(expand_mod("ctrl+shift+f5", Platform::HOST), "ctrl+shift+f5");
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +39,7 @@ fn resolve_bindings_basic() {
         ("ctrl+a".into(), "select_all".into(), None),
         ("ctrl+c".into(), "copy".into(), Some("pane_focused".into())),
     ];
-    let resolved = resolve_bindings(bindings);
+    let resolved = resolve_bindings(bindings, Platform::HOST);
     assert_eq!(resolved.len(), 2);
     assert_eq!(resolved[0].key, "ctrl+a");
     assert_eq!(resolved[0].command, "select_all");
@@ -61,7 +53,7 @@ fn resolve_bindings_later_overrides_earlier() {
         ("ctrl+a".into(), "cmd1".into(), None),
         ("ctrl+a".into(), "cmd2".into(), None),
     ];
-    let resolved = resolve_bindings(bindings);
+    let resolved = resolve_bindings(bindings, Platform::HOST);
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].command, "cmd2");
 }
@@ -72,7 +64,7 @@ fn resolve_bindings_same_key_different_when() {
         ("ctrl+a".into(), "cmd1".into(), None),
         ("ctrl+a".into(), "cmd2".into(), Some("pane_focused".into())),
     ];
-    let resolved = resolve_bindings(bindings);
+    let resolved = resolve_bindings(bindings, Platform::HOST);
     // Same key but different "when" = different entries
     assert_eq!(resolved.len(), 2);
 }
@@ -83,7 +75,7 @@ fn resolve_bindings_removal_with_dash() {
         ("ctrl+a".into(), "select_all".into(), None),
         ("ctrl+a".into(), "-".into(), None), // removal
     ];
-    let resolved = resolve_bindings(bindings);
+    let resolved = resolve_bindings(bindings, Platform::HOST);
     assert!(resolved.is_empty());
 }
 
@@ -93,7 +85,7 @@ fn resolve_bindings_removal_then_readd() {
         ("ctrl+a".into(), "cmd1".into(), None),
         ("ctrl+a".into(), "-".into(), None),
     ];
-    let resolved = resolve_bindings(bindings);
+    let resolved = resolve_bindings(bindings, Platform::HOST);
     assert!(resolved.is_empty());
 
     // A later entry on the same (key, when) overwrites the "-" disable:
@@ -102,26 +94,24 @@ fn resolve_bindings_removal_then_readd() {
         ("ctrl+a".into(), "-".into(), None),
         ("ctrl+a".into(), "cmd3".into(), None),
     ];
-    let resolved2 = resolve_bindings(bindings2);
+    let resolved2 = resolve_bindings(bindings2, Platform::HOST);
     assert_eq!(resolved2.len(), 1);
     assert_eq!(resolved2[0].command, "cmd3");
 }
 
 #[test]
 fn resolve_bindings_mod_expansion() {
-    let bindings = vec![("Mod+A".into(), "select_all".into(), None)];
-    let resolved = resolve_bindings(bindings);
-    assert_eq!(resolved.len(), 1);
-    if cfg!(target_os = "macos") {
-        assert_eq!(resolved[0].key, "meta+a");
-    } else {
-        assert_eq!(resolved[0].key, "ctrl+a");
+    for (platform, key) in [(Platform::Macos, "meta+a"), (Platform::Windows, "ctrl+a")] {
+        let bindings = vec![("Mod+A".into(), "select_all".into(), None)];
+        let resolved = resolve_bindings(bindings, platform);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].key, key);
     }
 }
 
 #[test]
 fn resolve_bindings_empty() {
-    let resolved = resolve_bindings(vec![]);
+    let resolved = resolve_bindings(vec![], Platform::HOST);
     assert!(resolved.is_empty());
 }
 
@@ -131,19 +121,71 @@ fn resolve_bindings_empty() {
 
 #[test]
 fn render_shortcut_simple() {
-    let parts = render_shortcut("ctrl+shift+f5");
+    let parts = render_shortcut("ctrl+shift+f5", Platform::HOST);
     assert_eq!(parts, vec!["Ctrl", "Shift", "F5"]);
 }
 
 #[test]
 fn render_shortcut_single_key() {
-    let parts = render_shortcut("escape");
+    let parts = render_shortcut("escape", Platform::HOST);
     assert_eq!(parts, vec!["Escape"]);
 }
 
 #[test]
+fn render_shortcut_follows_the_platform() {
+    assert_eq!(
+        render_shortcut("meta+alt+c", Platform::Macos),
+        vec!["\u{2318}", "\u{2325}", "C"]
+    );
+    assert_eq!(
+        render_shortcut("ctrl+alt+c", Platform::Windows),
+        vec!["Ctrl", "Alt", "C"]
+    );
+}
+
+#[test]
+fn defaults_follow_the_platform_asked_for() {
+    let shortcut = |prefs: &ResolvedPreferences, id: &str| {
+        prefs
+            .commands
+            .iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.shortcut.clone())
+    };
+    let mac = PreferencesManager::resolve(load::Loaded::default(), Platform::Macos);
+    let linux = PreferencesManager::resolve(load::Loaded::default(), Platform::Linux);
+    assert_eq!(
+        shortcut(&mac, "connect_remote").as_deref(),
+        Some("meta+shift+r")
+    );
+    assert_eq!(
+        shortcut(&linux, "connect_remote").as_deref(),
+        Some("ctrl+shift+r")
+    );
+    assert_eq!(shortcut(&mac, "navigate_root"), None);
+    assert_eq!(
+        shortcut(&linux, "navigate_root").as_deref(),
+        Some("ctrl+backspace")
+    );
+
+    let has = |platform, id: &str| default_commands(platform).iter().any(|c| c.id == id);
+    assert!(has(Platform::Windows, "connect_wsl"));
+    assert!(!has(Platform::Linux, "connect_wsl"));
+
+    let terminal = |platform| {
+        load::parse("", platform)
+            .unwrap()
+            .settings
+            .terminal
+            .font_family
+    };
+    assert!(terminal(Platform::Windows).starts_with("\"Cascadia Mono\""));
+    assert!(terminal(Platform::Macos).starts_with("Menlo"));
+}
+
+#[test]
 fn command_registry_invariants() {
-    let defs = default_commands();
+    let defs = default_commands(Platform::HOST);
     let mut ids = std::collections::HashSet::new();
     for def in &defs {
         assert!(
@@ -613,6 +655,7 @@ word_wrap = true
 image_background = "checkerboard"
 alternate_mode = "hex"
 "#,
+        Platform::HOST,
     )
     .unwrap();
 
@@ -944,7 +987,7 @@ fn renaming_a_command_follows_into_associations() {
 // ---------------------------------------------------------------------------
 
 fn loaded(content: &str) -> load::Loaded {
-    load::parse(content).unwrap()
+    load::parse(content, Platform::HOST).unwrap()
 }
 
 fn locations(loaded: &load::Loaded) -> Vec<(&str, Option<u32>)> {
@@ -1001,7 +1044,7 @@ fn unknown_keys_are_reported() {
 
 #[test]
 fn a_file_that_is_not_toml_reads_as_nothing() {
-    let problem = load::parse("[appearance]\nnatural_sort = \n").unwrap_err();
+    let problem = load::parse("[appearance]\nnatural_sort = \n", Platform::HOST).unwrap_err();
     assert_eq!(problem.location, "settings.toml");
     assert_eq!(problem.line, Some(2));
 }

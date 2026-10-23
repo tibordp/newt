@@ -1,12 +1,14 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::Platform;
+
 /// User-facing preferences that can be set in settings.toml.
 ///
 /// Serde defaults ensure every field has a compiled-in default. The JSON Schema
 /// is derived via `schemars` so the frontend settings editor can be generated
 /// automatically.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct AppPreferences {
     #[serde(default)]
@@ -39,6 +41,29 @@ pub struct AppPreferences {
     #[serde(default)]
     #[schemars(title = "Viewer")]
     pub viewer: ViewerPreferences,
+}
+
+impl AppPreferences {
+    pub fn for_platform(platform: Platform) -> Self {
+        Self {
+            appearance: Default::default(),
+            behavior: Default::default(),
+            enrichers: Default::default(),
+            archives: ArchivePreferences::for_platform(platform),
+            hot_paths: Default::default(),
+            quick_open: Default::default(),
+            environment: EnvironmentPreferences::for_platform(platform),
+            terminal: TerminalPreferences::for_platform(platform),
+            editor: Default::default(),
+            viewer: Default::default(),
+        }
+    }
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self::for_platform(Platform::HOST)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -92,26 +117,30 @@ pub struct TerminalPreferences {
     pub scrollback: u32,
 }
 
-/// Each platform's own terminal font, then its predecessors. On Linux,
-/// fontconfig stands Liberation Mono in for Courier New, so it stays off
-/// the list; the size matches the UI's 13px, which reads as GTK's 11pt.
-#[cfg(target_os = "macos")]
-const TERMINAL_FONT: (&str, u32) = (r#"Menlo, Monaco, "Courier New", monospace"#, 12);
-#[cfg(windows)]
-const TERMINAL_FONT: (&str, u32) = (r#""Cascadia Mono", Consolas, "Courier New", monospace"#, 12);
-#[cfg(not(any(target_os = "macos", windows)))]
-const TERMINAL_FONT: (&str, u32) = (
-    r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#,
-    13,
-);
+impl TerminalPreferences {
+    /// Each platform's own terminal font, then its predecessors. On Linux,
+    /// fontconfig stands Liberation Mono in for Courier New, so it stays off
+    /// the list; the size matches the UI's 13px, which reads as GTK's 11pt.
+    fn for_platform(platform: Platform) -> Self {
+        let (font_family, font_size) = match platform {
+            Platform::Macos => (r#"Menlo, Monaco, "Courier New", monospace"#, 12),
+            Platform::Windows => (r#""Cascadia Mono", Consolas, "Courier New", monospace"#, 12),
+            Platform::Linux => (
+                r#""Adwaita Mono", "Source Code Pro", Hack, "DejaVu Sans Mono", monospace"#,
+                13,
+            ),
+        };
+        Self {
+            font_family: font_family.into(),
+            font_size,
+            scrollback: 1000,
+        }
+    }
+}
 
 impl Default for TerminalPreferences {
     fn default() -> Self {
-        Self {
-            font_family: TERMINAL_FONT.0.into(),
-            font_size: TERMINAL_FONT.1,
-            scrollback: 1000,
-        }
+        Self::for_platform(Platform::HOST)
     }
 }
 
@@ -513,14 +542,11 @@ impl Default for QuickOpenPreferences {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, specta::Type,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveFormatPref {
     // `title` is the dropdown label in the settings UI (extension form),
     // emitted per-variant into the JSON Schema `oneOf`.
-    #[cfg_attr(windows, default)]
     #[schemars(title = ".zip")]
     Zip,
     #[schemars(title = ".7z")]
@@ -531,9 +557,23 @@ pub enum ArchiveFormatPref {
     TarGz,
     #[schemars(title = ".tar.xz")]
     TarXz,
-    #[cfg_attr(not(windows), default)]
     #[schemars(title = ".tar.zst")]
     TarZst,
+}
+
+impl ArchiveFormatPref {
+    fn for_platform(platform: Platform) -> Self {
+        match platform {
+            Platform::Windows => Self::Zip,
+            Platform::Macos | Platform::Linux => Self::TarZst,
+        }
+    }
+}
+
+impl Default for ArchiveFormatPref {
+    fn default() -> Self {
+        Self::for_platform(Platform::HOST)
+    }
 }
 
 impl From<ArchiveFormatPref> for newt_engine::operation::ArchiveFormat {
@@ -576,10 +616,10 @@ pub struct ArchivePreferences {
     pub zstd_level: i32,
 }
 
-impl Default for ArchivePreferences {
-    fn default() -> Self {
+impl ArchivePreferences {
+    fn for_platform(platform: Platform) -> Self {
         Self {
-            default_format: ArchiveFormatPref::default(),
+            default_format: ArchiveFormatPref::for_platform(platform),
             preserve_symlinks: true,
             zip_level: 6,
             sevenz_level: 6,
@@ -587,6 +627,12 @@ impl Default for ArchivePreferences {
             xz_level: 6,
             zstd_level: 3,
         }
+    }
+}
+
+impl Default for ArchivePreferences {
+    fn default() -> Self {
+        Self::for_platform(Platform::HOST)
     }
 }
 
@@ -602,21 +648,25 @@ pub struct EnvironmentPreferences {
     pub extra_path: Vec<String>,
 }
 
+impl EnvironmentPreferences {
+    /// The well-known install locations of common dev tools.
+    fn for_platform(platform: Platform) -> Self {
+        let extra_path = match platform {
+            Platform::Macos => vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()],
+            Platform::Linux => vec![
+                "~/.local/bin".into(),
+                "/snap/bin".into(),
+                "/var/lib/flatpak/exports/bin".into(),
+            ],
+            Platform::Windows => Vec::new(),
+        };
+        Self { extra_path }
+    }
+}
+
 impl Default for EnvironmentPreferences {
     fn default() -> Self {
-        // Per-platform defaults aimed at the well-known install locations
-        // for common dev tools. Users can edit / extend in settings.toml.
-        #[cfg(target_os = "macos")]
-        let extra_path = vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
-        #[cfg(target_os = "linux")]
-        let extra_path = vec![
-            "~/.local/bin".into(),
-            "/snap/bin".into(),
-            "/var/lib/flatpak/exports/bin".into(),
-        ];
-        #[cfg(windows)]
-        let extra_path: Vec<String> = Vec::new();
-        Self { extra_path }
+        Self::for_platform(Platform::HOST)
     }
 }
 

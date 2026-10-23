@@ -78,6 +78,7 @@ body {
 }
 
 .lights,
+.icon,
 .controls {
   display: none;
 }
@@ -126,8 +127,20 @@ body {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
+.windows .icon,
+.kde .icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin-left: 7px;
+}
+
+.kde .icon {
+  margin-left: 6px;
+}
+
 .windows .title {
-  margin-left: 14px;
+  margin-left: 5px;
   font-size: 12px;
   flex: 1;
 }
@@ -141,19 +154,53 @@ body {
   width: 46px;
   display: grid;
   place-items: center;
-  font-style: normal;
-  font-size: 13px;
-  color: var(--title);
 }
 
-.windows .controls i:nth-child(1)::before {
-  content: "\2500";
+/* Segoe Fluent Icons' caption glyphs: 10px, a 1px stroke. */
+.windows .controls i::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: var(--title);
+  mask: var(--glyph) center / 10px 10px no-repeat;
 }
-.windows .controls i:nth-child(2)::before {
-  content: "\25A1";
+.windows .controls i:nth-child(1) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M0 5.5h10' stroke='%23000'/%3E%3C/svg%3E");
 }
-.windows .controls i:nth-child(3)::before {
-  content: "\2715";
+.windows .controls i:nth-child(2) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Crect x='.5' y='.5' width='9' height='9' rx='1' fill='none' stroke='%23000'/%3E%3C/svg%3E");
+}
+.windows .controls i:nth-child(3) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M.5.5l9 9m0-9l-9 9' stroke='%23000'/%3E%3C/svg%3E");
+}
+
+/* The native menu bar of a viewer or editor: Win32's, in Segoe at 9pt,
+   and Breeze's in the header colour. */
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: var(--menubar-height);
+  background: var(--titlebar);
+  color: var(--title);
+  font-size: var(--menubar-font-size);
+  cursor: default;
+  user-select: none;
+}
+
+.menubar span {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--menubar-item-padding);
+}
+
+.window.windows {
+  --menubar-height: 20px;
+  --menubar-font-size: 12px;
+  --menubar-item-padding: 7px;
+}
+
+.windows .menubar {
+  padding-left: 1px;
 }
 
 /* GNOME: GTK draws the frame — rounded corners, a shadow — and the app its
@@ -178,17 +225,27 @@ body {
   font-family: "Noto Sans", system-ui, sans-serif;
 }
 
+.window.kde {
+  --menubar-height: 26px;
+  --menubar-font-size: 13.33px;
+  --menubar-item-padding: 8px;
+}
+
+.kde .menubar {
+  padding-left: 2px;
+}
+
 .kde .title {
   flex: 1;
   text-align: center;
-  padding-left: 40px;
+  padding-left: 52px;
   font-size: 13.33px;
 }
 
 .kde .controls {
   display: flex;
-  gap: 6px;
-  margin-right: 9px;
+  gap: 7px;
+  margin-right: 6px;
 }
 
 .kde .controls i {
@@ -196,20 +253,24 @@ body {
   place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-style: normal;
-  color: var(--title);
 }
 
-.kde .controls i:nth-child(1)::before {
-  content: "\2304";
+/* Breeze's glyphs: chevrons down and up, and a cross. */
+.kde .controls i::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: var(--title);
+  mask: var(--glyph) center / 12px 12px no-repeat;
 }
-.kde .controls i:nth-child(2)::before {
-  content: "\2303";
+.kde .controls i:nth-child(1) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M.5 3.5 6 9l5.5-5.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
 }
-.kde .controls i:nth-child(3)::before {
-  content: "\2715";
+.kde .controls i:nth-child(2) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M.5 8.5 6 3l5.5 5.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
+}
+.kde .controls i:nth-child(3) {
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1.75 1.75l8.5 8.5m0-8.5-8.5 8.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: dark) {

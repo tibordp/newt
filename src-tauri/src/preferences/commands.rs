@@ -1,3 +1,5 @@
+use super::Platform;
+
 /// Which window's dispatcher owns a command. Main-window commands dispatch
 /// as `cmd_<id>` Tauri commands; viewer/editor commands are handled locally
 /// by the owning window's frontend — the registry only supplies identity,
@@ -23,19 +25,10 @@ pub struct CommandDef {
     pub scope: CommandScope,
 }
 
-/// Like `vec![]` but supports `@if(expr) { ... }` blocks for
-/// runtime-conditional items and `@cfg(pred) { ... }` blocks for
-/// compile-time conditional items.
+/// Like `vec![]` but supports `@if(expr) { ... }` blocks for conditional
+/// items.
 macro_rules! conditional_vec {
     (@inner $v:ident,) => {};
-    // @cfg(pred) { items... }, rest...
-    (@inner $v:ident, @cfg($pred:meta) { $($item:expr),* $(,)? } $($rest:tt)*) => {
-        $(
-            #[cfg($pred)]
-            $v.push($item);
-        )*
-        conditional_vec!(@inner $v, $($rest)*);
-    };
     // @if(expr) { items... }, rest...
     (@inner $v:ident, @if($cond:expr) { $($item:expr),* $(,)? } $($rest:tt)*) => {
         if $cond {
@@ -56,7 +49,7 @@ macro_rules! conditional_vec {
     }};
 }
 
-pub fn default_commands() -> Vec<CommandDef> {
+pub fn default_commands(platform: Platform) -> Vec<CommandDef> {
     conditional_vec![
         CommandDef {
             id: "new_window".into(),
@@ -247,7 +240,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             short_name: Some("Delete".into()),
             category: "File".into(),
             // Finder conventions on macOS: ⌘⌫ = Move to Trash.
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["f8".into(), "delete".into(), "meta+backspace".into()]
             } else {
                 vec!["f8".into(), "delete".into()]
@@ -262,7 +255,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             short_name: None,
             category: "File".into(),
             // Finder conventions on macOS: ⌥⌘⌫ = Delete Immediately.
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["shift+delete".into(), "meta+alt+backspace".into()]
             } else {
                 vec!["shift+delete".into()]
@@ -464,7 +457,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             short_name: Some("Copy".into()),
             category: "Edit".into(),
             // Ctrl+Ins is the CUA-era clipboard alias; macOS has no Insert key.
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["mod+c".into()]
             } else {
                 vec!["mod+c".into(), "ctrl+insert".into()]
@@ -488,7 +481,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Paste from Clipboard".into(),
             short_name: Some("Paste".into()),
             category: "Edit".into(),
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["mod+v".into()]
             } else {
                 vec!["mod+v".into(), "shift+insert".into()]
@@ -503,7 +496,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             short_name: Some("Move Here".into()),
             category: "Edit".into(),
             // Finder's ⌥⌘V.
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["mod+alt+v".into()]
             } else {
                 Vec::new()
@@ -518,7 +511,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             short_name: Some("CopyPath".into()),
             category: "Edit".into(),
             // Finder's "Copy as Pathname"; Explorer's "Copy as path".
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec!["mod+alt+c".into()]
             } else {
                 vec!["mod+shift+c".into()]
@@ -661,7 +654,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: false,
             scope: CommandScope::Main,
         },
-        @cfg(windows) {
+        @if(platform == Platform::Windows) {
             CommandDef {
                 id: "connect_wsl".into(),
                 name: "Connect to WSL Distribution...".into(),
@@ -730,7 +723,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             category: "Navigation".into(),
             // Unbound on macOS: ⌘⌫ is aliased to `delete_selected` there
             // (Finder's Move to Trash — see `resolve_bindings`).
-            default_keys: if cfg!(target_os = "macos") {
+            default_keys: if platform == Platform::Macos {
                 vec![]
             } else {
                 vec!["mod+backspace".into()]

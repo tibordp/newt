@@ -3,7 +3,7 @@
 // See docs/scenes/README.md.
 //
 //   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark]
-//     [--platform macos|windows|gnome|kde] [--jobs N]
+//     [--platform macos,windows,gnome,kde|all] [--jobs N]
 //
 // Needs Playwright's WebKit once: `npx playwright install webkit`.
 
@@ -24,36 +24,58 @@ const defaultOut = join(root, "docs", "screenshots");
 const hero = { name: "pack-to-s3", scheme: "light" };
 const heroPath = join(root, "docs", "screenshot.png");
 
+const PLATFORMS = ["macos", "windows", "gnome", "kde"];
+// The OS whose default preferences each platform's shots show, what its
+// webview reports as `navigator.platform`, and the key a step's "Mod"
+// presses.
+const OS = {
+  macos: { name: "macos", navigator: "MacIntel", mod: "Meta" },
+  windows: { name: "windows", navigator: "Win32", mod: "Control" },
+  gnome: { name: "linux", navigator: "Linux x86_64", mod: "Control" },
+  kde: { name: "linux", navigator: "Linux x86_64", mod: "Control" },
+};
+
 const { values: opts, positionals: only } = parseArgs({
   allowPositionals: true,
   options: {
     out: { type: "string", default: defaultOut },
     scheme: { type: "string" },
-    platform: { type: "string", default: "macos" },
+    platform: { type: "string", default: "macos,windows,gnome" },
     jobs: { type: "string" },
   },
 });
 
+const platforms =
+  opts.platform === "all" ? PLATFORMS : opts.platform.split(",");
+const unknownPlatforms = platforms.filter((p) => !PLATFORMS.includes(p));
+if (unknownPlatforms.length) {
+  console.error(`unknown platform(s): ${unknownPlatforms.join(", ")}`);
+  process.exit(1);
+}
+
 // Default preferences come from Rust so shortcuts, columns and every other
-// default match the app. Keybinding defaults are per-platform: the macOS
-// house style wants this run on a Mac.
+// default match the app, as it ships on each platform's OS.
 mkdirSync(join(root, "target", "scenes"), { recursive: true });
-const exported = spawnSync(
-  "cargo",
-  [
-    "run",
-    "-p",
-    "newt",
-    "--features",
-    "specta-bindings",
-    "--quiet",
-    "--",
-    "--export-scene-defaults",
-    join(root, "target", "scenes", "defaults.json"),
-  ],
-  { cwd: root, stdio: "inherit" },
-);
-if (exported.status !== 0) process.exit(exported.status ?? 1);
+for (const os of new Set(platforms.map((p) => OS[p].name))) {
+  const exported = spawnSync(
+    "cargo",
+    [
+      "run",
+      "-p",
+      "newt",
+      "--features",
+      "specta-bindings",
+      "--quiet",
+      "--",
+      "--export-scene-defaults",
+      join(root, "target", "scenes", `defaults-${os}.json`),
+      "--scene-platform",
+      os,
+    ],
+    { cwd: root, stdio: "inherit" },
+  );
+  if (exported.status !== 0) process.exit(exported.status ?? 1);
+}
 
 const server = await createServer({
   root,
@@ -68,7 +90,9 @@ const server = await createServer({
 await server.listen();
 const base = server.resolvedUrls.local[0];
 const browser = await webkit.launch();
-mkdirSync(opts.out, { recursive: true });
+for (const platform of platforms) {
+  mkdirSync(join(opts.out, platform), { recursive: true });
+}
 
 let failed = false;
 try {
@@ -82,16 +106,18 @@ try {
     throw new Error(`unknown scene(s): ${unknown.join(", ")}`);
 
   const jobs = [];
-  for (const [name, { schemes }] of Object.entries(scenes)) {
-    if (only.length && !only.includes(name)) continue;
-    for (const scheme of schemes) {
-      if (opts.scheme && scheme !== opts.scheme) continue;
-      const platform = opts.platform === "macos" ? "" : `-${opts.platform}`;
-      const out = join(
-        opts.out,
-        `${name}${platform}${scheme === "dark" ? "-dark" : ""}.png`,
-      );
-      jobs.push({ name, scheme, out });
+  for (const platform of platforms) {
+    for (const [name, { schemes }] of Object.entries(scenes)) {
+      if (only.length && !only.includes(name)) continue;
+      for (const scheme of schemes) {
+        if (opts.scheme && scheme !== opts.scheme) continue;
+        const out = join(
+          opts.out,
+          platform,
+          `${name}${scheme === "dark" ? "-dark" : ""}.png`,
+        );
+        jobs.push({ name, scheme, platform, out });
+      }
     }
   }
 
@@ -104,14 +130,14 @@ try {
   await Promise.all(
     Array.from({ length: workers }, async () => {
       while (next < jobs.length) {
-        const { name, scheme, out } = jobs[next++];
+        const { name, scheme, platform, out } = jobs[next++];
         try {
-          await capture(name, scheme, out);
+          await capture(name, scheme, platform, out);
           console.log(`✓ ${out}`);
           if (
             name === hero.name &&
             scheme === hero.scheme &&
-            opts.platform === "macos" &&
+            platform === "macos" &&
             resolve(opts.out) === defaultOut
           ) {
             copyFileSync(out, heroPath);
@@ -119,7 +145,7 @@ try {
           }
         } catch (e) {
           failed = true;
-          console.error(`✗ ${name} (${scheme}): ${e.message}`);
+          console.error(`✗ ${name} (${platform}, ${scheme}): ${e.message}`);
         }
       }
     }),
@@ -130,7 +156,7 @@ try {
 }
 process.exit(failed ? 1 : 0);
 
-async function capture(name, scheme, out) {
+async function capture(name, scheme, platform, out) {
   const context = await browser.newContext({
     viewport: { width: 1600, height: 1200 },
     deviceScaleFactor: 2,
@@ -139,6 +165,11 @@ async function capture(name, scheme, out) {
     timezoneId: "Europe/Ljubljana",
   });
   try {
+    await context.addInitScript((value) => {
+      Object.defineProperty(Navigator.prototype, "platform", {
+        get: () => value,
+      });
+    }, OS[platform].navigator);
     const page = await context.newPage();
     page.on("console", (msg) => {
       if (msg.type() === "error") console.error(`  ${name}: ${msg.text()}`);
@@ -148,7 +179,7 @@ async function capture(name, scheme, out) {
     await page.goto(
       new URL(
         `docs/scenes/frame.html?scene=${encodeURIComponent(name)}` +
-          `&platform=${encodeURIComponent(opts.platform)}`,
+          `&platform=${encodeURIComponent(platform)}`,
         base,
       ).href,
     );
@@ -158,7 +189,10 @@ async function capture(name, scheme, out) {
 
     const { steps } = await app.evaluate(() => window.__scene);
     for (const step of steps) {
-      if ("press" in step) await page.keyboard.press(step.press);
+      if ("press" in step)
+        await page.keyboard.press(
+          step.press.replace(/\bMod\b/g, OS[platform].mod),
+        );
       else if ("type" in step) await page.keyboard.type(step.type);
       else if ("click" in step) await app.click(step.click);
       else if ("waitFor" in step) await app.waitForSelector(step.waitFor);
@@ -170,6 +204,9 @@ async function capture(name, scheme, out) {
       console.warn(`  ${name}: unmocked ${unmocked.join(", ")}`);
     if (errors.length) throw new Error(errors.join("; "));
 
+    // Web fonts load as text first uses them.
+    await app.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => document.fonts.ready);
     await (
       await page.$(".backdrop")
     ).screenshot({ path: out, omitBackground: true });

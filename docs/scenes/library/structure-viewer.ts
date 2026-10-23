@@ -34,7 +34,7 @@ const scene: Scene = {
     dissect_close: () => null,
   },
   steps: [
-    { press: "Meta+G" },
+    { press: "Mod+G" },
     { type: recording.offset.toString(16) },
     { press: "Enter" },
     { press: "ArrowRight" },

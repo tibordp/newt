@@ -6,6 +6,7 @@
 
 use serde::de::DeserializeOwned;
 
+use super::Platform;
 use super::commands::CommandScope;
 use super::schema::{AppPreferences, EnterAction, SettingsFile};
 
@@ -44,8 +45,9 @@ fn line_of(content: &str, offset: usize) -> u32 {
         + 1
 }
 
-/// Read `content`; `Err` with the syntax error when it isn't TOML.
-pub fn parse(content: &str) -> Result<Loaded, ConfigProblem> {
+/// Read `content` over `platform`'s defaults; `Err` with the syntax error
+/// when it isn't TOML.
+pub fn parse(content: &str, platform: Platform) -> Result<Loaded, ConfigProblem> {
     let syntax = |message: String, span: Option<std::ops::Range<usize>>| ConfigProblem {
         location: "settings.toml".into(),
         line: span.map(|s| line_of(content, s.start)),
@@ -133,10 +135,12 @@ pub fn parse(content: &str) -> Result<Loaded, ConfigProblem> {
         let table = doc.get(section)?.as_table()?;
         line(table.key(key)?.span())
     };
-    let (settings, problems) = merge(&loaded.file, setting_line);
+    let (settings, problems) = merge(&loaded.file, setting_line, platform);
     loaded.settings = settings;
     loaded.problems.extend(problems);
-    loaded.problems.extend(check(&loaded, &doc, content));
+    loaded
+        .problems
+        .extend(check(&loaded, &doc, content, platform));
     loaded.problems.sort_by_key(|p| p.line.unwrap_or(u32::MAX));
     Ok(loaded)
 }
@@ -153,12 +157,13 @@ fn read<T: DeserializeOwned>(value: toml::Value) -> Result<T, String> {
 fn merge(
     file: &SettingsFile,
     line: impl Fn(&str, &str) -> Option<u32>,
+    platform: Platform,
 ) -> (AppPreferences, Vec<ConfigProblem>) {
     let schema =
         serde_json::to_value(schemars::schema_for!(AppPreferences)).expect("the schema serializes");
     let mut problems = Vec::new();
-    let mut merged =
-        toml::Value::try_from(AppPreferences::default()).expect("the defaults serialize");
+    let mut merged = toml::Value::try_from(AppPreferences::for_platform(platform))
+        .expect("the defaults serialize");
     for (section, value) in file.sections() {
         let toml::Value::Table(table) = value else {
             continue;
@@ -219,13 +224,18 @@ fn range_problem(
 }
 
 /// Settings that read but can't work.
-fn check(loaded: &Loaded, doc: &toml_edit::Document<&str>, content: &str) -> Vec<ConfigProblem> {
+fn check(
+    loaded: &Loaded,
+    doc: &toml_edit::Document<&str>,
+    content: &str,
+    platform: Platform,
+) -> Vec<ConfigProblem> {
     let mut problems = Vec::new();
     let entry_line = |array: &str, index: usize| {
         let tables = doc.get(array)?.as_array_of_tables()?;
         Some(line_of(content, tables.get(index)?.span()?.start))
     };
-    let commands: Vec<(String, CommandScope)> = super::commands::default_commands()
+    let commands: Vec<(String, CommandScope)> = super::commands::default_commands(platform)
         .into_iter()
         .map(|c| (c.id, c.scope))
         .collect();
@@ -253,7 +263,7 @@ fn check(loaded: &Loaded, doc: &toml_edit::Document<&str>, content: &str) -> Vec
                 message,
             });
         }
-        if let Some(message) = key_problem(&bind.key) {
+        if let Some(message) = key_problem(&bind.key, platform) {
             problems.push(ConfigProblem {
                 location,
                 line,
@@ -265,7 +275,11 @@ fn check(loaded: &Loaded, doc: &toml_edit::Document<&str>, content: &str) -> Vec
     for (slot, command) in loaded.command_slots.iter().zip(&loaded.file.commands) {
         let location = format!("[[command]] #{}", slot + 1);
         let line = entry_line("command", *slot);
-        if let Some(message) = command.key.as_deref().and_then(key_problem) {
+        if let Some(message) = command
+            .key
+            .as_deref()
+            .and_then(|key| key_problem(key, platform))
+        {
             problems.push(ConfigProblem {
                 location: location.clone(),
                 line,
@@ -355,7 +369,7 @@ fn when_problem(scope: CommandScope, when: &str) -> Option<String> {
 
 /// Why a key binding can never fire, if it can't: bindings match keys
 /// spelled with their modifiers in one order.
-fn key_problem(key: &str) -> Option<String> {
+fn key_problem(key: &str, platform: Platform) -> Option<String> {
     const ORDER: [&str; 4] = ["meta", "ctrl", "shift", "alt"];
     let parts: Vec<&str> = key.split('+').collect();
     let (last, modifiers) = parts.split_last()?;
@@ -365,7 +379,7 @@ fn key_problem(key: &str) -> Option<String> {
     let mut previous = None;
     for modifier in modifiers {
         let canonical = match *modifier {
-            "mod" if cfg!(target_os = "macos") => "meta",
+            "mod" if platform == Platform::Macos => "meta",
             "mod" => "ctrl",
             other => other,
         };

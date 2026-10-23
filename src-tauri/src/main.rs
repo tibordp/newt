@@ -128,6 +128,11 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     export_scene_defaults: Option<std::path::PathBuf>,
 
+    /// Platform whose defaults --export-scene-defaults writes (default: this one).
+    #[cfg(feature = "specta-bindings")]
+    #[arg(long, value_enum, requires = "export_scene_defaults")]
+    scene_platform: Option<preferences::Platform>,
+
     /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
     #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
     verbose: u8,
@@ -1058,7 +1063,9 @@ fn main() {
     #[cfg(feature = "specta-bindings")]
     if let Some(path) = &args.export_scene_defaults {
         let defaults = serde_json::json!({
-            "preferences": preferences::PreferencesManager::defaults(),
+            "preferences": preferences::PreferencesManager::defaults(
+                args.scene_platform.unwrap_or(preferences::Platform::HOST),
+            ),
             "runtime_state": runtime_state::RuntimeState::default(),
         });
         std::fs::write(path, serde_json::to_vec_pretty(&defaults).unwrap())

@@ -5,20 +5,22 @@ they can be regenerated whenever the UI changes:
 
 ```sh
 npx playwright install webkit   # once
-npm run screenshots             # every scene, light and dark
+npm run screenshots             # every scene, light and dark, macOS, Windows and GNOME
 npm run screenshots -- terminal editor --scheme dark
-npm run screenshots -- settings --platform gnome
+npm run screenshots -- settings --platform gnome,kde
+npm run screenshots -- --platform all
 ```
 
-PNGs land in `docs/screenshots/` (`<scene>.png`, `<scene>-dark.png`; `--out`
-to change) at 2×, in window chrome with its shadow on a transparent
-background. `--platform` (`macos`, the default, `windows`, `gnome` or `kde`)
-picks the platform look and its chrome, and adds the platform to the file
-names; only the fonts installed on the machine are used, so off macOS's own
-the text is in a stand-in. That folder isn't committed. The one shot that is, the README's
-`docs/screenshot.png`, is the light `pack-to-s3`, copied there whenever a run
-into the default folder renders it. Run it on a Mac: default preferences, and
-with them the rendered shortcuts, are exported from Rust for the host platform.
+PNGs land in a folder per platform under `docs/screenshots/`
+(`macos/<scene>.png`, `macos/<scene>-dark.png`, …; `--out` to change) at 2×,
+in window chrome with its shadow on a transparent background. `--platform`
+takes a comma-separated list of `macos`, `windows`, `gnome` and `kde`, or
+`all`; by default every platform but KDE. Each renders its platform's look and
+chrome (a viewer's or editor's menu bar on Windows and KDE), the default
+preferences and shortcuts of its OS (GNOME and KDE share Linux's), its fonts,
+and its paths. That folder isn't committed. The one
+shot that is, the README's `docs/screenshot.png`, is the light `pack-to-s3`,
+copied there whenever a run into the default folder renders it.
 Captures run in parallel, half as many at once as the machine has cores;
 `--jobs N` sets it.
 
@@ -39,24 +41,43 @@ state change leaves stale. On top of the state, a scene can carry:
 - `commands`: extra IPC handlers, for dialogs that fetch their data.
 - `steps`: Playwright `press` / `type` / `click` / `waitFor`, run before the
   capture — for state that lives in React, like a filtered command palette.
+  `Mod` in a `press` is the platform's command modifier (`Mod+G`: ⌘G on
+  macOS, Ctrl+G elsewhere).
 - `ready`: a selector that must be present before capture, for content that
   arrives by some route other than IPC.
 
 `builders.ts` fills in the tedious parts of the state: listings with `..`,
 sorting, stats and breadcrumbs, git annotations, operations.
 
+Scenes are written with macOS's paths, under the `demo` user's home
+(`demo.ts`). `platform.ts` makes the local ones the platform's: `/home/demo`
+and `/run/media/demo/...` on Linux; `C:\Users\demo`, drives for volumes and
+`C:\Logs` for `/var/log` on Windows, in the wire form `VfsPath`s carry
+(`/?/C:/Users/demo`). `pane` does it for local panes, breadcrumbs included,
+and the harness for everything else: `VfsPath`s on VFS 0, paths in text
+(dialogs, titles, terminal output), fixture keys and command results. A
+scene of a remote session sets `remote` and keeps its paths as written.
+`shellPrompt` is the demo shell's prompt: bash's, or PowerShell's on Windows.
+
+Each platform's fonts come from npm: Adwaita Sans and Mono for GNOME, Noto
+Sans and Hack for KDE, Cascadia Mono for Windows, with Open Sans standing in
+for Segoe UI, which isn't openly licensed (`fonts.ts`). macOS uses the
+system's.
+
 To author a scene, run `npm run dev` and open
 <http://localhost:1420/docs/scenes/frame.html>: it lists every scene and
-renders the one picked, reloading as you edit. The page needs
-`target/scenes/defaults.json`, which `npm run screenshots` writes.
+renders the one picked, reloading as you edit. The page needs the
+platform's `target/scenes/defaults-<os>.json`, which `npm run screenshots`
+writes.
 
 ## How it works
 
 Nothing of the Rust side runs. `harness.ts` stands in for the backend with
 Tauri's `mockIPC`: it answers `ping` with the scene state,
 `get_preferences` / `get_runtime_state` with the defaults exported by
-`newt --export-scene-defaults` (a `specta-bindings` build; locale pinned to
-en-US), `get_system_appearance` with the platform's defaults, and file reads
+`newt --export-scene-defaults PATH --scene-platform OS` (a `specta-bindings`
+build; locale pinned to en-US), `get_system_appearance` with the platform's
+defaults, and file reads
 from the fixtures, then boots the real app on the
 window's route inside `scene.html`. `frame.html` draws the window chrome
 around that iframe.

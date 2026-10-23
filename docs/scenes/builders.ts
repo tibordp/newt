@@ -14,6 +14,13 @@ import type {
   ViewerMode,
   ViewerState,
 } from "../../src/lib/bindings";
+import {
+  OS,
+  isLocalRoot,
+  localBreadcrumbs,
+  localDisplay,
+  localWire,
+} from "./platform";
 
 /// Unix milliseconds, the unit `File` timestamps use.
 export const at = (iso: string): number => Date.parse(iso);
@@ -35,7 +42,7 @@ export function file(name: string, fields: Partial<File> = {}): File {
     is_hidden: name.startsWith(".") && name !== "..",
     symlink: null,
     user: { name: "demo" },
-    group: { name: "staff" },
+    group: { name: OS === "linux" ? "demo" : "staff" },
     mode: 0o100644,
     attributes: null,
     modified: null,
@@ -101,13 +108,18 @@ export type PaneSpec = {
   override?: Partial<PaneViewState>;
 };
 
+/// A pane on `LOCAL` takes the platform's paths (`platform.ts`); `path`
+/// is written as on macOS.
 export function pane(spec: PaneSpec): PaneViewState {
   const vfs = spec.vfs ?? LOCAL;
+  const local = vfs === LOCAL;
+  const path = local ? localWire(spec.path) : spec.path;
   const sorting = spec.sorting ?? { key: "name", asc: true };
   const visible = spec.entries.filter((f) => spec.showHidden || !f.is_hidden);
   const sorted = spec.presorted ? visible : sortEntries(visible, sorting);
-  const items =
-    spec.path === "/" ? sorted : [dir("..", { mode: null }), ...sorted];
+  const items = (local ? isLocalRoot(path) : path === "/")
+    ? sorted
+    : [dir("..", { mode: null }), ...sorted];
   const selected = new Set(spec.selected ?? []);
   const focused = spec.focused ?? items[0]?.name ?? null;
 
@@ -151,7 +163,7 @@ export function pane(spec: PaneSpec): PaneViewState {
     : [];
 
   return {
-    path: { vfs_id: vfs.id, path: spec.path },
+    path: { vfs_id: vfs.id, path },
     pending_path: null,
     loading: false,
     partial: null,
@@ -177,12 +189,17 @@ export function pane(spec: PaneSpec): PaneViewState {
       focused === null ? null : items.findIndex((f) => f.name === focused),
     scroll_shift: 0,
     cursor_reveals: 0,
-    display_path: vfs.display(spec.path),
+    display_path: local ? localDisplay(spec.path) : vfs.display(spec.path),
     vfs_display_name: vfs.name,
     vfs_type_name: vfs.typeName,
     is_host_local: vfs.hostLocal,
-    metadata_traits: { unix_owner: vfs.hostLocal, windows_attributes: false },
-    breadcrumbs: breadcrumbs(vfs.id, spec.path, vfs.rootLabel),
+    metadata_traits:
+      local && OS === "windows"
+        ? { unix_owner: false, windows_attributes: true }
+        : { unix_owner: vfs.hostLocal, windows_attributes: false },
+    breadcrumbs: local
+      ? localBreadcrumbs(vfs.id, spec.path)
+      : breadcrumbs(vfs.id, spec.path, vfs.rootLabel),
     context_badges: badges,
     enrichment_activity: {},
     ...spec.override,

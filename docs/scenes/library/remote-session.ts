@@ -29,6 +29,7 @@ const linux = { user: { name: "deploy" }, group: { name: "deploy" } };
 
 const scene: Scene = {
   description: "A full remote session over SSH: panes and terminal on the host",
+  remote: true,
   size: { width: 1100, height: 640 },
   ...docsColumns(1100),
   window: "main",
