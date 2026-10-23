@@ -458,7 +458,7 @@
 
     --color-menu-bg: #36363a;
 
-    &[data-window-inactive] {
+    &[data-header-bar][data-window-inactive] {
       --color-chrome-light: #222226;
     }
   }
