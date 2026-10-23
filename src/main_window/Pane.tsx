@@ -1207,6 +1207,10 @@ function PaneInner(
   // for them, keeping the old rows on screen meanwhile: the cursor can be
   // put far from the window, e.g. by a focus restored after a refresh.
   const pendingCursorScrollRef = useRef<number | null>(null);
+  // A list not laid out yet has no height to reveal the cursor in: the
+  // resize that lays it out runs the reveal (`sizedTick`) instead.
+  const awaitingSizeRef = useRef(false);
+  const [sizedTick, setSizedTick] = useState(0);
   const windowCovers = (top: number, height: number) => {
     const fw = fileWindowRef.current;
     const first = Math.floor(top / rowHeight);
@@ -1215,6 +1219,10 @@ function PaneInner(
   };
   useLayoutEffect(() => {
     const container = containerRef.current;
+    if (container?.clientHeight === 0) {
+      awaitingSizeRef.current = true;
+      return;
+    }
     const prev = prevCursorRef.current;
     const pathKey = `${path.vfs_id}:${path.path}`;
     prevCursorRef.current = {
@@ -1275,7 +1283,15 @@ function PaneInner(
     // Intentionally excluding file_window — this should only fire when the
     // cursor moves or is revealed, not when the window slides on scroll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, path, focused, focusedIndex, cursorReveals, rowHeight]);
+  }, [
+    active,
+    path,
+    focused,
+    focusedIndex,
+    cursorReveals,
+    rowHeight,
+    sizedTick,
+  ]);
   useLayoutEffect(() => {
     const container = containerRef.current;
     const target = pendingCursorScrollRef.current;
@@ -1293,7 +1309,9 @@ function PaneInner(
         if (filter != null) {
           inputRef.current?.focus();
         } else {
-          containerRef.current?.focus();
+          // The list is always in view; WebKit would otherwise scroll it to
+          // its end when focused before it is laid out.
+          containerRef.current?.focus({ preventScroll: true });
         }
       }
     } else if (!active) {
@@ -2015,7 +2033,9 @@ function PaneInner(
   );
 
   const focusSelf = useCallback(() => {
-    (filter != null ? inputRef : containerRef).current?.focus();
+    (filter != null ? inputRef : containerRef).current?.focus({
+      preventScroll: true,
+    });
   }, [filter]);
 
   /// Restore focus ourselves when a context menu closes. Radix would aim
@@ -2125,6 +2145,10 @@ function PaneInner(
     const container = containerRef.current;
     if (!container) return;
     const observer = new ResizeObserver(() => {
+      if (awaitingSizeRef.current && container.clientHeight > 0) {
+        awaitingSizeRef.current = false;
+        setSizedTick((tick) => tick + 1);
+      }
       const visibleCount = Math.ceil(container.clientHeight / rowHeight);
       if (visibleCount === lastViewportReportRef.current[1]) return;
       const firstVisible = Math.floor(container.scrollTop / rowHeight);
