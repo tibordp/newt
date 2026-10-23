@@ -458,7 +458,13 @@
 
   --color-fg: var(--scheme-view-fg, #232629);
   --color-fg-muted: var(--scheme-window-fg-inactive, #707d8a);
-  --color-chrome-fg: var(--color-fg-muted);
+  // The header's own text, a little softened: the scheme's inactive text
+  // is meant for the view and fades into the header.
+  --color-chrome-fg: color-mix(
+    in srgb,
+    var(--scheme-header-fg, #232629) 75%,
+    transparent
+  );
   --color-bg: var(--scheme-view-bg, #ffffff);
   --color-chrome: var(--scheme-window-bg, #eff0f1);
   --color-chrome-light: var(--scheme-header-bg, #dee0e2);
@@ -552,6 +558,11 @@
   @include dark {
     --color-fg: var(--scheme-view-fg, #fcfcfc);
     --color-fg-muted: var(--scheme-window-fg-inactive, #a1a9b1);
+    --color-chrome-fg: color-mix(
+      in srgb,
+      var(--scheme-header-fg, #fcfcfc) 75%,
+      transparent
+    );
     --color-bg: var(--scheme-view-bg, #141618);
     --color-chrome: var(--scheme-window-bg, #202326);
     --color-chrome-light: var(--scheme-header-bg, #2a2e32);
