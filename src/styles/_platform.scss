@@ -19,7 +19,7 @@
 }
 
 // macOS 26: SF at 13pt, the accent as a fill for whatever has the
-// keyboard, capsule push buttons, an accent halo around a focused field,
+// keyboard, rounded push buttons, an accent halo around a focused field,
 // translucent menus, and sheets with no footer chrome.
 :root[data-platform="macos"] {
   --font-ui: system-ui, -apple-system, sans-serif;
@@ -54,7 +54,6 @@
   --control-height: 24px;
   --control-padding-x: 14px;
   --radius-control: 7px;
-  --radius-button: 999px;
   --color-control-bg: #ffffff;
   --color-control-hover-bg: #ffffff;
   --color-control-active-bg: #e8e8e8;
