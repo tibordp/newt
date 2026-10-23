@@ -47,6 +47,9 @@
   // Chrome (headerbars, statusbars)
   --color-chrome: var(--_gray-200);
   --color-chrome-light: var(--_gray-100);
+  // Bars at the top of a window, under its title bar (pane headers, the
+  // image viewer's toolbar); the rest of the chrome takes chrome-light.
+  --color-header: var(--color-chrome-light);
   // Status bar text: quieter than content, readable on chrome-light.
   --color-chrome-fg: var(--_gray-700);
 
@@ -157,7 +160,7 @@
   // The title bar Newt draws: the strip under macOS's title and controls,
   // GNOME's header bar. Backdrop is while another window has the keyboard.
   --titlebar-height: 0px;
-  --color-titlebar: var(--color-chrome-light);
+  --color-titlebar: var(--color-header);
   --color-titlebar-backdrop: var(--color-titlebar);
   --color-titlebar-fg: var(--color-fg);
   --color-titlebar-fg-backdrop: var(--color-fg-muted);

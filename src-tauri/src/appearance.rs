@@ -71,6 +71,10 @@ pub struct SystemAppearance {
     /// The window's background, which a plain title bar is drawn in
     /// (macOS); the pane headers take it so the title bar runs on into them.
     pub window_bg: Option<LightDark>,
+    /// The bars along the foot of a window and its panes — status bars, the
+    /// function key bar, the terminal's tab bar: AppKit's fill for large
+    /// areas over the window background (macOS 14 on).
+    pub bar_bg: Option<LightDark>,
 }
 
 /// A colour as the light and the dark appearance resolve it, `#rrggbb`.
@@ -223,6 +227,7 @@ mod platform {
     use std::cell::Cell;
 
     use block2::StackBlock;
+    use objc2::rc::Retained;
     use objc2_app_kit::{
         NSAppearance, NSAppearanceName, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSColor,
         NSColorSpace,
@@ -258,24 +263,49 @@ mod platform {
             window_buttons: None,
             color_scheme: None,
             mica: false,
-            window_bg: light_dark(&NSColor::windowBackgroundColor()),
+            window_bg: light_dark(|| srgb_hex(&NSColor::windowBackgroundColor())),
+            bar_bg: objc2::available!(macos = 14.0)
+                .then(|| {
+                    light_dark(|| {
+                        over(
+                            &NSColor::quaternarySystemFillColor(),
+                            &NSColor::windowBackgroundColor(),
+                        )
+                    })
+                })
+                .flatten(),
         }
     }
 
-    fn srgb_hex(color: &NSColor) -> Option<String> {
-        color
-            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
-            .map(|c| hex(c.redComponent(), c.greenComponent(), c.blueComponent()))
+    fn srgb(color: &NSColor) -> Option<Retained<NSColor>> {
+        color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
     }
 
-    /// A dynamic colour as each appearance resolves it.
-    fn light_dark(color: &NSColor) -> Option<LightDark> {
+    fn srgb_hex(color: &NSColor) -> Option<String> {
+        srgb(color).map(|c| hex(c.redComponent(), c.greenComponent(), c.blueComponent()))
+    }
+
+    /// A translucent fill as painted over an opaque background.
+    fn over(fill: &NSColor, background: &NSColor) -> Option<String> {
+        let (fill, background) = (srgb(fill)?, srgb(background)?);
+        let a = fill.alphaComponent();
+        let mix = |f: f64, b: f64| f * a + b * (1.0 - a);
+        Some(hex(
+            mix(fill.redComponent(), background.redComponent()),
+            mix(fill.greenComponent(), background.greenComponent()),
+            mix(fill.blueComponent(), background.blueComponent()),
+        ))
+    }
+
+    /// A colour worked out under each appearance, dynamic colours resolving
+    /// to that appearance's.
+    fn light_dark(color: impl Fn() -> Option<String>) -> Option<LightDark> {
         // SAFETY: AppKit's appearance names are immutable statics.
         let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
         let resolve = |name: &NSAppearanceName| {
             let appearance = NSAppearance::appearanceNamed(name)?;
             let out = Cell::new(None);
-            let block = StackBlock::new(|| out.set(srgb_hex(color)));
+            let block = StackBlock::new(|| out.set(color()));
             appearance.performAsCurrentDrawingAppearance(&block);
             out.take()
         };
@@ -369,6 +399,7 @@ mod platform {
             color_scheme: None,
             mica: mica(),
             window_bg: None,
+            bar_bg: None,
         }
     }
 }
@@ -616,6 +647,8 @@ mod platform {
                 color_scheme: None,
                 mica: false,
                 window_bg: None,
+                bar_bg: None,
+                bar_bg: None,
             }
         } else {
             let globals = kdeglobals().and_then(|p| std::fs::read_to_string(p).ok());
@@ -629,6 +662,8 @@ mod platform {
                 color_scheme: globals.scheme,
                 mica: false,
                 window_bg: None,
+                bar_bg: None,
+                bar_bg: None,
             }
         }
     }
@@ -816,6 +851,11 @@ mod tests {
         let is_hex = |c: &str| c.len() == 7 && c.starts_with('#');
         assert!(is_hex(&bg.light) && is_hex(&bg.dark), "{bg:?}");
         assert_ne!(bg.light, bg.dark);
+        let bar = system_appearance()
+            .bar_bg
+            .expect("AppKit resolves the bar fill");
+        assert!(is_hex(&bar.light) && is_hex(&bar.dark), "{bar:?}");
+        assert_ne!(bar.light, bg.light);
     }
 
     #[test]

@@ -31,8 +31,10 @@
   --color-bg: #ffffff;
   --color-chrome: #ececec;
   // The title bar's colour, which the pane headers run on from: the
-  // window background, from AppKit (macOS 26's below).
-  --color-chrome-light: var(--system-window-bg-light, #ffffff);
+  // window background, from AppKit (macOS 26's below). The bars along the
+  // foot take AppKit's fill for large areas over it.
+  --color-header: var(--system-window-bg-light, #ffffff);
+  --color-chrome-light: var(--system-bar-bg-light, #f7f7f7);
   --color-surface: #f2f2f2;
   --color-separator: rgba(0, 0, 0, 0.1);
   --color-border: rgba(0, 0, 0, 0.12);
@@ -107,7 +109,8 @@
     --color-chrome-fg: #a0a0a0;
     --color-bg: #1e1e1e;
     --color-chrome: #323232;
-    --color-chrome-light: var(--system-window-bg-dark, #1e1e1e);
+    --color-header: var(--system-window-bg-dark, #1e1e1e);
+    --color-chrome-light: var(--system-bar-bg-dark, #252525);
     --color-surface: #2c2c2c;
     --color-separator: rgba(255, 255, 255, 0.1);
     --color-border: rgba(255, 255, 255, 0.12);

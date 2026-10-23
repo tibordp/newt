@@ -4568,7 +4568,13 @@ mica: boolean;
  * The window's background, which a plain title bar is drawn in
  * (macOS); the pane headers take it so the title bar runs on into them.
  */
-window_bg: LightDark | null }
+window_bg: LightDark | null; 
+/**
+ * The bars along the foot of a window and its panes — status bars, the
+ * function key bar, the terminal's tab bar: AppKit's fill for large
+ * areas over the window background (macOS 14 on).
+ */
+bar_bg: LightDark | null }
 export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 

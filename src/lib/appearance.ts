@@ -1,9 +1,9 @@
 /// The platform look the token layer (`_platform.scss`) follows: the design
 /// language as `data-platform` on the root; the system accent, UI font, KDE
-/// colour scheme and macOS window background as custom properties; Mica as
-/// `data-backdrop`; `data-window-inactive` while another window is active,
-/// and `data-square-corners` while GTK squares the frame under GNOME's
-/// header bar. Rust hands every window the current values before its first
+/// colour scheme and macOS window and bar backgrounds as custom properties;
+/// Mica as `data-backdrop`; `data-window-inactive` while another window is
+/// active, and `data-square-corners` while GTK squares the frame under
+/// GNOME's header bar. Rust hands every window the current values before its first
 /// paint (`window.__NEWT_APPEARANCE__`); a window asks again whenever it
 /// regains focus, which is when a change made in the system settings shows.
 
@@ -84,6 +84,7 @@ function fallback(): SystemAppearance {
     color_scheme: null,
     mica: false,
     window_bg: null,
+    bar_bg: null,
   };
 }
 
@@ -115,6 +116,8 @@ function apply() {
   set("--system-accent", current.accent);
   set("--system-window-bg-light", current.window_bg?.light);
   set("--system-window-bg-dark", current.window_bg?.dark);
+  set("--system-bar-bg-light", current.bar_bg?.light);
+  set("--system-bar-bg-dark", current.bar_bg?.dark);
   set(
     "--font-system",
     current.font_family && JSON.stringify(current.font_family),

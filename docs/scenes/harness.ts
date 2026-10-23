@@ -122,6 +122,7 @@ const appearance: SystemAppearance = {
   color_scheme: platform === "kde" ? BREEZE[dark ? "dark" : "light"] : null,
   mica: platform === "windows",
   window_bg: null,
+  bar_bg: null,
 };
 window.__NEWT_APPEARANCE__ = appearance;
 await loadFonts(platform);
