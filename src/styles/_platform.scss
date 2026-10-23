@@ -150,7 +150,7 @@
 // Windows 11: Segoe UI at 9pt and Fluent throughout — Mica behind the
 // chrome (the title bar's own, running on into the pane headers and bars),
 // elevation edges on controls, an accent underline under a focused field,
-// Windows Terminal's tabs, thin rounded scroll bars, and dialogs whose
+// flat underlined tabs, thin rounded scroll bars, and dialogs whose
 // buttons share a footer band.
 :root[data-platform="windows"] {
   --font-ui:
@@ -230,9 +230,11 @@
   --radius-menu-item: 4px;
   --menu-item-height: 28px;
 
-  --radius-tab: 6px 6px 0 0;
-  --tab-margin: 4px 0 0 4px;
+  // Flat tabs, as in dialogs, underlined.
   --color-tab-separator: transparent;
+  --color-tab-active-bg: transparent;
+  --tab-mark-offset: -2px;
+  --color-tab-mark-idle: var(--color-border-strong);
 
   @include dark {
     --color-fg: #ffffff;
