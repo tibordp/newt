@@ -14,6 +14,26 @@ use schema::{AppPreferences, BookmarkEntry, UserCommandEntry};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+/// The OS whose conventions default preferences and shortcut labels follow:
+/// always the host's in the app, any of them when exporting the defaults
+/// documentation scenes render with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Platform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+impl Platform {
+    pub const HOST: Self = if cfg!(target_os = "macos") {
+        Self::Macos
+    } else if cfg!(windows) {
+        Self::Windows
+    } else {
+        Self::Linux
+    };
+}
+
 /// The fully-resolved preferences state pushed to the frontend.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedPreferences {
@@ -564,12 +584,16 @@ impl PreferencesManager {
             return self.set_user_command_key(idx, new_keys.into_iter().next());
         }
 
-        let defaults = commands::default_commands();
+        let defaults = commands::default_commands(Platform::HOST);
         let def = defaults
             .iter()
             .find(|d| d.id == command_id)
             .ok_or_else(|| format!("Unknown command: {}", command_id))?;
-        let default_keys: Vec<String> = def.default_keys.iter().map(|k| expand_mod(k)).collect();
+        let default_keys: Vec<String> = def
+            .default_keys
+            .iter()
+            .map(|k| expand_mod(k, Platform::HOST))
+            .collect();
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
@@ -596,12 +620,16 @@ impl PreferencesManager {
             return self.set_command_keybindings(command_id, vec![], None);
         }
 
-        let defaults = commands::default_commands();
+        let defaults = commands::default_commands(Platform::HOST);
         let def = defaults
             .iter()
             .find(|d| d.id == command_id)
             .ok_or_else(|| format!("Unknown command: {}", command_id))?;
-        let default_keys: Vec<String> = def.default_keys.iter().map(|k| expand_mod(k)).collect();
+        let default_keys: Vec<String> = def
+            .default_keys
+            .iter()
+            .map(|k| expand_mod(k, Platform::HOST))
+            .collect();
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
@@ -634,7 +662,7 @@ impl PreferencesManager {
 
         match new_key {
             Some(k) if !k.is_empty() => {
-                entry.insert("key", toml_edit::value(expand_mod(&k)));
+                entry.insert("key", toml_edit::value(expand_mod(&k, Platform::HOST)));
             }
             _ => {
                 entry.remove("key");
@@ -721,10 +749,11 @@ impl PreferencesManager {
         Some(watcher)
     }
 
-    /// Preferences as resolved with no settings file on disk.
+    /// Preferences as resolved on `platform` with no settings file on disk.
     #[cfg(feature = "specta-bindings")]
-    pub fn defaults() -> ResolvedPreferences {
-        Self::resolve(load::Loaded::default())
+    pub fn defaults(platform: Platform) -> ResolvedPreferences {
+        let loaded = load::parse("", platform).expect("an empty file is TOML");
+        Self::resolve(loaded, platform)
     }
 
     /// Read settings.toml again. A file that isn't TOML leaves `previous`
@@ -744,13 +773,13 @@ impl PreferencesManager {
                 message: format!("can't be read: {e}"),
             }),
         };
-        let mut resolved = match content.and_then(|content| load::parse(&content)) {
-            Ok(loaded) => Self::resolve(loaded),
+        let mut resolved = match content.and_then(|content| load::parse(&content, Platform::HOST)) {
+            Ok(loaded) => Self::resolve(loaded, Platform::HOST),
             Err(problem) => {
                 warn!("settings.toml: {}", problem.message);
                 let mut kept = previous
                     .cloned()
-                    .unwrap_or_else(|| Self::resolve(load::Loaded::default()));
+                    .unwrap_or_else(|| Self::resolve(load::Loaded::default(), Platform::HOST));
                 kept.problems = vec![problem];
                 kept
             }
@@ -760,7 +789,7 @@ impl PreferencesManager {
         resolved
     }
 
-    fn resolve(loaded: load::Loaded) -> ResolvedPreferences {
+    fn resolve(loaded: load::Loaded, platform: Platform) -> ResolvedPreferences {
         let load::Loaded {
             file: user_file,
             settings,
@@ -769,7 +798,7 @@ impl PreferencesManager {
         } = loaded;
 
         // Build command table and default bindings
-        let command_defs = commands::default_commands();
+        let command_defs = commands::default_commands(platform);
         let mut bindings: Vec<(String, String, Option<String>)> = Vec::new();
 
         // 1. Default bindings from command defs. The first key of each
@@ -801,7 +830,7 @@ impl PreferencesManager {
 
         // Resolve: later entries override earlier ones for same key+when.
         // command = "-" removes the binding.
-        let resolved_bindings = resolve_bindings(bindings);
+        let resolved_bindings = resolve_bindings(bindings, platform);
 
         // Build command info with resolved shortcuts. `shortcuts` carries
         // every resolved binding in resolution order (defaults first, user
@@ -820,10 +849,13 @@ impl PreferencesManager {
                 let when = resolved.and_then(|b| b.when.clone());
                 let shortcut_display = shortcut
                     .as_ref()
-                    .map(|k| render_shortcut(k))
+                    .map(|k| render_shortcut(k, platform))
                     .unwrap_or_default();
-                let default_keys: Vec<String> =
-                    def.default_keys.iter().map(|k| expand_mod(k)).collect();
+                let default_keys: Vec<String> = def
+                    .default_keys
+                    .iter()
+                    .map(|k| expand_mod(k, platform))
+                    .collect();
                 // Overridden = the resolved key set differs from the default
                 // set, or a resolved binding dispatches in a non-default
                 // context. A command with no keys at all in both is pristine.
@@ -861,7 +893,7 @@ impl PreferencesManager {
             let shortcut = resolved.map(|b| b.key.clone());
             let shortcut_display = shortcut
                 .as_ref()
-                .map(|k| render_shortcut(k))
+                .map(|k| render_shortcut(k, platform))
                 .unwrap_or_default();
 
             commands.push(CommandInfo {
@@ -911,7 +943,7 @@ impl PreferencesManager {
         let schema = schemars::schema_for!(AppPreferences);
         let mut schema_json = serde_json::to_value(schema).unwrap_or_default();
         // Packages are a macOS thing; their settings do nothing elsewhere.
-        if !cfg!(target_os = "macos") {
+        if platform != Platform::Macos {
             for (section, setting) in [
                 ("BehaviorPreferences", "open_packages"),
                 ("QuickOpenPreferences", "skip_packages"),
@@ -965,11 +997,10 @@ fn deep_merge_table(base: &mut toml::Value, overlay: &toml::Value) {
 }
 
 /// Expand `mod+` to the platform-native modifier key (meta on macOS, ctrl elsewhere).
-fn expand_mod(key: &str) -> String {
-    let replacement = if cfg!(target_os = "macos") {
-        "meta"
-    } else {
-        "ctrl"
+fn expand_mod(key: &str, platform: Platform) -> String {
+    let replacement = match platform {
+        Platform::Macos => "meta",
+        Platform::Windows | Platform::Linux => "ctrl",
     };
 
     // Normalize to lowercase
@@ -986,7 +1017,10 @@ fn expand_mod(key: &str) -> String {
 
 /// Resolve bindings with cascading. Later entries override earlier ones for the
 /// same (key, when) pair. `command = "-"` removes a binding.
-fn resolve_bindings(entries: Vec<(String, String, Option<String>)>) -> Vec<ResolvedBinding> {
+fn resolve_bindings(
+    entries: Vec<(String, String, Option<String>)>,
+    platform: Platform,
+) -> Vec<ResolvedBinding> {
     use std::collections::HashMap;
 
     let mut map: HashMap<(String, Option<String>), String> = HashMap::new();
@@ -994,7 +1028,7 @@ fn resolve_bindings(entries: Vec<(String, String, Option<String>)>) -> Vec<Resol
     let mut order: Vec<(String, Option<String>)> = Vec::new();
 
     for (key, command, when) in entries {
-        let expanded_key = expand_mod(&key);
+        let expanded_key = expand_mod(&key, platform);
         let map_key = (expanded_key, when);
         if !map.contains_key(&map_key) {
             order.push(map_key.clone());
@@ -1019,8 +1053,8 @@ fn resolve_bindings(entries: Vec<(String, String, Option<String>)>) -> Vec<Resol
 }
 
 /// Render a key string like "ctrl+shift+f5" into display parts ["Ctrl", "Shift", "F5"].
-fn render_shortcut(key: &str) -> Vec<String> {
-    let is_mac = cfg!(target_os = "macos");
+fn render_shortcut(key: &str, platform: Platform) -> Vec<String> {
+    let is_mac = platform == Platform::Macos;
     key.split('+')
         .map(|part| match part.to_lowercase().as_str() {
             "ctrl" => "Ctrl".to_string(),
@@ -1085,7 +1119,7 @@ fn apply_set_keybindings(
             let key = t
                 .get("key")
                 .and_then(|v| v.as_str())
-                .map(expand_mod)
+                .map(|k| expand_mod(k, Platform::HOST))
                 .unwrap_or_default();
             let when = t
                 .get("when")
@@ -1105,7 +1139,7 @@ fn apply_set_keybindings(
     let mut seen = std::collections::HashSet::new();
     let new_keys: Vec<String> = new_keys
         .iter()
-        .map(|k| expand_mod(k))
+        .map(|k| expand_mod(k, Platform::HOST))
         .filter(|k| !k.is_empty() && seen.insert(k.clone()))
         .collect();
 
@@ -1187,7 +1221,7 @@ fn apply_reset_keybinding(
             let key = t
                 .get("key")
                 .and_then(|v| v.as_str())
-                .map(expand_mod)
+                .map(|k| expand_mod(k, Platform::HOST))
                 .unwrap_or_default();
             let when = t
                 .get("when")
@@ -1224,7 +1258,7 @@ fn apply_reset_keybinding(
             let k = t
                 .get("key")
                 .and_then(|v| v.as_str())
-                .map(expand_mod)
+                .map(|k| expand_mod(k, Platform::HOST))
                 .unwrap_or_default();
             if default_keys.contains(&k) {
                 t.remove("key");

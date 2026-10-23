@@ -25,6 +25,15 @@ const hero = { name: "pack-to-s3", scheme: "light" };
 const heroPath = join(root, "docs", "screenshot.png");
 
 const PLATFORMS = ["macos", "windows", "gnome", "kde"];
+// The OS whose default preferences each platform's shots show, what its
+// webview reports as `navigator.platform`, and the key a step's "Mod"
+// presses.
+const OS = {
+  macos: { name: "macos", navigator: "MacIntel", mod: "Meta" },
+  windows: { name: "windows", navigator: "Win32", mod: "Control" },
+  gnome: { name: "linux", navigator: "Linux x86_64", mod: "Control" },
+  kde: { name: "linux", navigator: "Linux x86_64", mod: "Control" },
+};
 
 const { values: opts, positionals: only } = parseArgs({
   allowPositionals: true,
@@ -45,25 +54,28 @@ if (unknownPlatforms.length) {
 }
 
 // Default preferences come from Rust so shortcuts, columns and every other
-// default match the app. Keybinding defaults are per-platform: the macOS
-// house style wants this run on a Mac.
+// default match the app, as it ships on each platform's OS.
 mkdirSync(join(root, "target", "scenes"), { recursive: true });
-const exported = spawnSync(
-  "cargo",
-  [
-    "run",
-    "-p",
-    "newt",
-    "--features",
-    "specta-bindings",
-    "--quiet",
-    "--",
-    "--export-scene-defaults",
-    join(root, "target", "scenes", "defaults.json"),
-  ],
-  { cwd: root, stdio: "inherit" },
-);
-if (exported.status !== 0) process.exit(exported.status ?? 1);
+for (const os of new Set(platforms.map((p) => OS[p].name))) {
+  const exported = spawnSync(
+    "cargo",
+    [
+      "run",
+      "-p",
+      "newt",
+      "--features",
+      "specta-bindings",
+      "--quiet",
+      "--",
+      "--export-scene-defaults",
+      join(root, "target", "scenes", `defaults-${os}.json`),
+      "--scene-platform",
+      os,
+    ],
+    { cwd: root, stdio: "inherit" },
+  );
+  if (exported.status !== 0) process.exit(exported.status ?? 1);
+}
 
 const server = await createServer({
   root,
@@ -153,6 +165,11 @@ async function capture(name, scheme, platform, out) {
     timezoneId: "Europe/Ljubljana",
   });
   try {
+    await context.addInitScript((value) => {
+      Object.defineProperty(Navigator.prototype, "platform", {
+        get: () => value,
+      });
+    }, OS[platform].navigator);
     const page = await context.newPage();
     page.on("console", (msg) => {
       if (msg.type() === "error") console.error(`  ${name}: ${msg.text()}`);
@@ -172,7 +189,10 @@ async function capture(name, scheme, platform, out) {
 
     const { steps } = await app.evaluate(() => window.__scene);
     for (const step of steps) {
-      if ("press" in step) await page.keyboard.press(step.press);
+      if ("press" in step)
+        await page.keyboard.press(
+          step.press.replace(/\bMod\b/g, OS[platform].mod),
+        );
       else if ("type" in step) await page.keyboard.type(step.type);
       else if ("click" in step) await app.click(step.click);
       else if ("waitFor" in step) await app.waitForSelector(step.waitFor);

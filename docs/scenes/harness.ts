@@ -29,8 +29,6 @@ type Defaults = {
   runtime_state: RuntimeState;
 };
 
-const DEFAULTS_URL = "/target/scenes/defaults.json";
-
 /// Rendered only once content arrived by a route other than IPC. Monaco
 /// shows one empty line before the model is filled, so a one-line editor
 /// fixture needs its own `ready`.
@@ -125,17 +123,21 @@ const appearance: SystemAppearance = {
   mica: platform === "windows",
 };
 window.__NEWT_APPEARANCE__ = appearance;
+/// GNOME and KDE share Linux's default preferences.
+const os = platform === "gnome" || platform === "kde" ? "linux" : platform;
+const defaultsUrl = `/target/scenes/defaults-${os}.json`;
 const readySelectors = [READY[scene.window], scene.ready].filter(
   (s): s is string => !!s,
 );
 status.steps = scene.steps ?? [];
 
-const response = await fetch(DEFAULTS_URL);
+const response = await fetch(defaultsUrl);
 if (!response.headers.get("content-type")?.includes("json")) {
   fail(
-    `${DEFAULTS_URL} is missing; \`npm run screenshots\` writes it, or run ` +
+    `${defaultsUrl} is missing; \`npm run screenshots\` writes it, or run ` +
       "`cargo run -p newt --features specta-bindings -- " +
-      "--export-scene-defaults target/scenes/defaults.json`",
+      `--export-scene-defaults target/scenes/defaults-${os}.json ` +
+      `--scene-platform ${os}\``,
   );
 }
 const defaults = (await response.json()) as Defaults;

@@ -603,8 +603,13 @@ mod palette_command_tests {
     /// bindings show whether each one is registered with that shape.
     #[test]
     fn every_main_command_has_its_cmd_handler() {
+        use crate::preferences::Platform;
         let bindings = include_str!("../../../src/lib/bindings.ts");
-        for def in crate::preferences::commands::default_commands() {
+        let every_platform = <Platform as clap::ValueEnum>::value_variants();
+        for def in every_platform
+            .iter()
+            .flat_map(|&p| crate::preferences::commands::default_commands(p))
+        {
             if def.scope != crate::preferences::commands::CommandScope::Main {
                 continue;
             }
