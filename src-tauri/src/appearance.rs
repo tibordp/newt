@@ -648,7 +648,6 @@ mod platform {
                 mica: false,
                 window_bg: None,
                 bar_bg: None,
-                bar_bg: None,
             }
         } else {
             let globals = kdeglobals().and_then(|p| std::fs::read_to_string(p).ok());
@@ -662,7 +661,6 @@ mod platform {
                 color_scheme: globals.scheme,
                 mica: false,
                 window_bg: None,
-                bar_bg: None,
                 bar_bg: None,
             }
         }
