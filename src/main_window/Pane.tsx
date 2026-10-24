@@ -14,12 +14,7 @@ import { ContextMenu, isKeyboardContextMenu, openMenuAt } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
 import { useAfterGrace } from "../lib/useAfterGrace";
 import { useHeaderPlan } from "./headerFit";
-import {
-  type FileIconGlyph,
-  fileIconGlyph,
-  iconColor,
-  setiGlyph,
-} from "../lib/fileIcons";
+import { type FileIconGlyph, fileIconGlyph, iconColor } from "../lib/fileIcons";
 import { commands, type Result, type RowActions } from "../lib/bindings";
 import { rawCommands, safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
@@ -934,11 +929,10 @@ function HeaderMeasure({
 }
 
 /// Branch indicator for the pane header, fed by the git enricher's
-/// context badge. Quiet by design: muted text, seti git glyph, a `*`
-/// suffix for uncommitted changes, ↑/↓ only when ahead/behind.
+/// context badge. Quiet by design: muted text, Octicons' branch glyph, a
+/// `*` suffix for uncommitted changes, ↑/↓ only when ahead/behind.
 function GitBranchBadge({ badge }: { badge: ContextBadge }) {
   const branch = badge.git_branch;
-  const git = setiGlyph("git");
   const parts = [branch.name + (branch.dirty ? "*" : "")];
   if (branch.ahead > 0) parts.push(`↑${branch.ahead}`);
   if (branch.behind > 0) parts.push(`↓${branch.behind}`);
@@ -956,7 +950,7 @@ function GitBranchBadge({ badge }: { badge: ContextBadge }) {
   return (
     <div className={styles.gitBadge} title={title}>
       <span className={styles.gitBadgeIcon} aria-hidden>
-        {git.ch}
+        {"\u{f418}"}
       </span>
       {parts.join(" ")}
     </div>
